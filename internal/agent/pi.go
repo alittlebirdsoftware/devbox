@@ -59,13 +59,14 @@ func (p pi) Command(method AuthMethod, promptPath, transcriptPath string) (strin
 	//     failed; the captured status is re-raised so the summary step never
 	//     masks the guarded exit code.
 	return fmt.Sprintf(
-		`pi --provider anthropic --mode json < %[1]s > %[2]s && `+
+		`pi --version > %[4]s 2>/dev/null || true; `+
+			`pi --provider anthropic --mode json < %[1]s > %[2]s && `+
 			`jq -es 'map(select(.type == "message_end" and .message.role == "assistant")) | last as $m | `+
 			`$m != null and (($m.message.stopReason // "") | IN("error", "aborted") | not)' %[2]s > /dev/null; `+
 			`AGENT_STATUS=$?; `+
 			`jq -rs 'map(select(.type == "message_end" and .message.role == "assistant")) | last | .message.content // "" | `+
 			`if type == "array" then map(.text // empty) | join("\n") else . end' %[2]s > %[3]s 2>/dev/null || true; `+
 			`(exit "$AGENT_STATUS")`,
-		promptPath, transcriptPath, summaryPath(transcriptPath),
+		promptPath, transcriptPath, summaryPath(transcriptPath), versionPath(transcriptPath),
 	), nil
 }

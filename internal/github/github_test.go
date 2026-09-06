@@ -60,3 +60,10 @@ func TestBuildPRBodyTestOutput(t *testing.T) {
 		t.Errorf("test output not rendered:\n%s", body)
 	}
 }
+
+func TestBuildPRBodyPlaneTask(t *testing.T) {
+	body := BuildPRBody(PRInfo{TaskID: "t1", Agent: "claude", PlaneTask: "<!-- plane-task {\"taskId\":\"t1\"} -->"})
+	if !strings.Contains(body, "<!-- plane-task {") || !strings.HasSuffix(strings.TrimSpace(body), "-->") {
+		t.Errorf("plane-task comment not carried:\n%s", body)
+	}
+}

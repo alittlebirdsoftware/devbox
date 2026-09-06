@@ -37,10 +37,11 @@ func (c claude) Command(method AuthMethod, promptPath, transcriptPath string) (s
 	//     captured status is re-raised so the summary step never masks the
 	//     agent's exit code.
 	return fmt.Sprintf(
-		`claude -p "$(cat %[1]s)" --dangerously-skip-permissions --output-format json > %[2]s; `+
+		`claude --version > %[4]s 2>/dev/null || true; `+
+			`claude -p "$(cat %[1]s)" --dangerously-skip-permissions --output-format json > %[2]s; `+
 			`AGENT_STATUS=$?; `+
 			`jq -r '.result // empty' %[2]s > %[3]s 2>/dev/null || true; `+
 			`(exit "$AGENT_STATUS")`,
-		promptPath, transcriptPath, summaryPath(transcriptPath),
+		promptPath, transcriptPath, summaryPath(transcriptPath), versionPath(transcriptPath),
 	), nil
 }

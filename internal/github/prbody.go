@@ -12,6 +12,7 @@ type PRInfo struct {
 	IssueURL   string // "" for a --task run
 	Summary    string // the agent's summary (from the run's summary artifact)
 	TestOutput string // optional captured test output; "" to omit
+	PlaneTask  string // rendered plane.Comment(...); "" to omit. Hidden in the rendered body.
 }
 
 // BuildPRBody renders the deterministic PR body. It ends with a plain,
@@ -42,5 +43,8 @@ func BuildPRBody(info PRInfo) string {
 
 	b.WriteString("\n---\n\n")
 	b.WriteString("**Agent-produced — human review required. Do not merge without review.**\n")
+	if info.PlaneTask != "" {
+		b.WriteString("\n" + info.PlaneTask + "\n")
+	}
 	return b.String()
 }

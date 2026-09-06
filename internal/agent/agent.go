@@ -45,6 +45,13 @@ func summaryPath(transcriptPath string) string {
 	return path.Dir(transcriptPath) + "/summary.txt"
 }
 
+// versionPath is where a Command snippet records the agent CLI's version
+// (agent_version.txt beside the transcript) for the control-plane task facts.
+// Capture is best-effort and never affects the exit status.
+func versionPath(transcriptPath string) string {
+	return path.Dir(transcriptPath) + "/agent_version.txt"
+}
+
 // adapters maps each registered agent name to its constructor. Lookup and the
 // adapter-contract parity suite both consume it, so registering an agent here
 // fails the suite until a matching contract case is added.

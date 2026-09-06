@@ -10,12 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/iQonAi/devbox/internal/agent"
 	"github.com/iQonAi/devbox/internal/github"
+	"github.com/iQonAi/devbox/internal/plane"
 	"github.com/iQonAi/devbox/internal/prompt"
 	"github.com/iQonAi/devbox/internal/repo"
 	"github.com/iQonAi/devbox/internal/runner"
@@ -128,6 +130,7 @@ var artifactKinds = []struct{ name, kind string }{
 	{"diff.patch", "diff"},
 	{"run.log", "log"},
 	{"summary.txt", "summary"},
+	{"plane-task.json", "plane_task"},
 }
 
 // Run executes the task. It returns an Outcome (with a terminal State) on a
@@ -272,7 +275,9 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 	// The launch attempt is recorded before Run; success-side events after —
 	// so the trail never claims a launch that failed (§12).
 	deps.event(req.TaskID, store.EventSecurity, "launching container "+runner.ContainerName(spec))
+	startedAt := time.Now()
 	res, err := deps.Runner.Run(runCtx, spec)
+	finishedAt := time.Now()
 	if err != nil {
 		// The runner error may be the run context ending. Map the context cause
 		// to the terminal state (§7.4): timeout is Failed (D9), a cancel is
@@ -322,8 +327,24 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 	}
 
 	// 8. Terminal outcome (D9): Completed iff the agent exited 0 AND ≥1 commit.
+	// Control-plane task facts (host-observed; the gate turns them into the Task
+	// row). Written as an artifact for every terminal outcome and carried in the
+	// PR body when one is opened.
+	planeFacts := plane.Facts{
+		TaskID: req.TaskID, IssueNumber: req.IssueNumber, AgentName: req.Agent.Name(),
+		ContainerID: runner.ContainerName(spec), BundleSha: headSha(wt.Path),
+		StartedAt: startedAt, FinishedAt: finishedAt, Commits: out.Commits, ExitCode: res.ExitCode,
+	}
+	writePlaneTask := func(prOpened bool) plane.Task {
+		planeFacts.PROpened = prOpened
+		pt := plane.FromRun(outDir, planeFacts)
+		_ = os.WriteFile(filepath.Join(outDir, "plane-task.json"), []byte(pt.JSON()+"\n"), 0o644)
+		out.Artifacts = collectArtifacts(outDir)
+		return pt
+	}
 	if res.ExitCode != 0 || out.Commits < 1 {
 		out.State = StateFailed
+		writePlaneTask(false)
 		return out, nil
 	}
 	out.State = StateCompleted
@@ -340,12 +361,15 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 		if prTitle == "" {
 			prTitle = req.TaskID
 		}
+		pt := writePlaneTask(true)
 		body := github.BuildPRBody(github.PRInfo{
 			TaskID: req.TaskID, Agent: req.Agent.Name(), IssueURL: issueURL,
-			Summary: readArtifact(outDir, "summary.txt"),
+			Summary:   readArtifact(outDir, "summary.txt"),
+			PlaneTask: plane.Comment(pt),
 		})
 		url, err := gh.OpenPR(ctx, wt.Path, branch, req.DefaultBranch, prTitle, body)
 		if err != nil {
+			writePlaneTask(false)
 			return failedOutcome(ctx, out, "open pr: "+err.Error()), nil
 		}
 		deps.event(req.TaskID, store.EventSecurity, "Opened PR "+url)
@@ -354,8 +378,20 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 			// Best-effort back-link; a comment failure must not fail the task.
 			_ = gh.CommentIssue(ctx, req.IssueNumber, "Agent-produced PR: "+url)
 		}
+	} else {
+		writePlaneTask(false)
 	}
 	return out, nil
+}
+
+// headSha is the feature branch head after the bundle was applied; "" if git
+// cannot answer (the facts are best-effort; the row stays valid without it).
+func headSha(dir string) string {
+	b, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // failedOutcome marks out Failed with reason — unless the task context ended,
