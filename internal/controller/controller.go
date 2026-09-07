@@ -7,8 +7,8 @@ package controller
 
 import (
 	"bytes"
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -100,7 +100,7 @@ type Request struct {
 	Prompt        prompt.Input
 	Agent         agent.Agent
 	AuthMethod    agent.AuthMethod
-	AuthValue     string // model token/key value (M3: from flag/env; M5: LoadCredential)
+	AuthValue     string            // model token/key value (M3: from flag/env; M5: LoadCredential)
 	MCPServers    map[string]string // remote MCP servers (name -> https URL) registered for the agent
 	MCPCreds      string            // MCP OAuth store JSON for the agent (LoadCredential); "" = none
 	Limits        Limits

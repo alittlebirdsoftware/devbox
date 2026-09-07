@@ -1,9 +1,9 @@
 package config
 
 import (
-	"strings"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
