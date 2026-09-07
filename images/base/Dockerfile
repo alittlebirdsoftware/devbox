@@ -31,6 +31,7 @@ RUN apt-get update \
    fd-find \
    git \
    jq \
+   poppler-utils \
    procps \
    python3 \
    python3-pip \

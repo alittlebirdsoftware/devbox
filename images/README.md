@@ -17,7 +17,7 @@ nothing fetched at run time.
 | Bun         | `BUN_VERSION` (1.3.14)         | official `bun.sh` install script         |
 | Go          | `GO_VERSION` (1.26.5)          | go.dev tarball, **sha256-verified**      |
 | Python      | 3.11 + pip + venv             | Debian `apt`                             |
-| Essentials  | git, ripgrep (`rg`), fd, build-essential, curl, jq, unzip, procps, xz-utils | `apt` |
+| Essentials  | git, ripgrep (`rg`), fd, build-essential, curl, jq, unzip, procps, xz-utils, poppler-utils (`pdftotext`/`pdftoppm`, for the branded-cart-hero deck ingest) | `apt` |
 | Claude Code | latest (installer-tracked)    | native installer (`claude.ai/install.sh`) |
 | Codex       | `CODEX_VERSION` (latest)       | `@openai/codex` (npm)                    |
 | Pi          | `PI_VERSION` (latest)          | `@earendil-works/pi-coding-agent` (npm)  |
