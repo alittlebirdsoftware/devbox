@@ -19,6 +19,18 @@ cd %[1]s
 exec 2> %[2]s/run.log
 git config user.email "agent@localhost"
 git config user.name "agent-task"
+if [ -n "${%[5]s:-}" ]; then
+  umask 077
+  printf '%%s' "$%[5]s" > "$HOME/.claude.json"
+  unset %[5]s
+fi
+if [ -n "${%[6]s:-}" ]; then
+  umask 077
+  mkdir -p "$HOME/.claude"
+  printf '%%s' "$%[6]s" > "$HOME/.claude/.credentials.json"
+  unset %[6]s
+fi
+umask 022
 %[3]s
 AGENT_EXIT=$?
 if [ "$(git rev-list %[4]s..HEAD --count 2>/dev/null || echo 0)" -gt 0 ]; then
@@ -27,7 +39,7 @@ if [ "$(git rev-list %[4]s..HEAD --count 2>/dev/null || echo 0)" -gt 0 ]; then
 fi
 printf '%%s\n' "$AGENT_EXIT" > %[2]s/agent.exit
 exit "$AGENT_EXIT"
-`, runner.SrcPath, runner.OutPath, agentCmd, base)
+`, runner.SrcPath, runner.OutPath, agentCmd, base, EnvMCPServers, EnvMCPCreds)
 	// bash -c, NOT -lc: a login shell sources /etc/profile and ~/.profile, but
 	// the container runs with HOME=/task (no profile there), so -l resets PATH
 	// and drops /home/agent/.local/bin where the agent CLIs live. -c inherits

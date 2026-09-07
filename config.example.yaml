@@ -14,6 +14,18 @@ repos:
     repo: devbox
     default_branch: main
     token_ref: gh-token-devbox
+  # A repo whose agent needs a remote MCP server (e.g. Artlist image generation):
+  # mcp_servers is written to $HOME/.claude.json in the container; mcp_creds_ref
+  # names a LoadCredential secret holding the agent's MCP OAuth store (the
+  # mcpOAuth section of a claude .credentials.json). Public egress is already
+  # allowed (only RFC1918/CGNAT/link-local are denied), so no network change.
+  # - name: branded-cart-hero
+  #   owner: alittlebirdsoftware
+  #   repo: branded-cart-hero
+  #   default_branch: main
+  #   token_ref: gh-token-branded-cart-hero
+  #   mcp_servers: { artlist: https://mcp.artlist.io/mcp }
+  #   mcp_creds_ref: claude-mcp-credentials
 
 # Agent base image and the podman command (the cross-user wrapper on the VM).
 image: localhost/devbox-agent-base:dev

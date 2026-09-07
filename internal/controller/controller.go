@@ -6,6 +6,8 @@
 package controller
 
 import (
+	"bytes"
+	"encoding/json"
 	"context"
 	"errors"
 	"fmt"
@@ -99,6 +101,8 @@ type Request struct {
 	Agent         agent.Agent
 	AuthMethod    agent.AuthMethod
 	AuthValue     string // model token/key value (M3: from flag/env; M5: LoadCredential)
+	MCPServers    map[string]string // remote MCP servers (name -> https URL) registered for the agent
+	MCPCreds      string            // MCP OAuth store JSON for the agent (LoadCredential); "" = none
 	Limits        Limits
 	WorkDir       string // host scratch dir for prompt, export, and out
 }
@@ -247,6 +251,22 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 	secretEnv := map[string]string{}
 	if req.AuthValue != "" {
 		secretEnv[envVar] = req.AuthValue
+	}
+	// MCP registration and its OAuth store take the same env-file path as the
+	// model credential (never argv); the wrapper materialises them under $HOME
+	// inside the container before the agent starts, then unsets them.
+	if len(req.MCPServers) > 0 {
+		reg, err := mcpRegistrationJSON(req.MCPServers)
+		if err != nil {
+			return Outcome{}, err
+		}
+		secretEnv[EnvMCPServers] = reg
+	}
+	if req.MCPCreds != "" {
+		if !json.Valid([]byte(req.MCPCreds)) {
+			return Outcome{}, fmt.Errorf("mcp credentials for repo %q are not valid JSON", req.RepoName)
+		}
+		secretEnv[EnvMCPCreds] = compactJSON(req.MCPCreds)
 	}
 
 	outDir := filepath.Join(req.WorkDir, "out")
@@ -454,4 +474,37 @@ func (d Deps) recordArtifacts(taskID string, arts []Artifact) {
 	for _, a := range arts {
 		_ = d.Recorder.InsertArtifact(taskID, a.Kind, a.Path)
 	}
+}
+
+// Env names the wrapper reads to seed the agent's home with MCP state.
+const (
+	EnvMCPServers = "AGENT_TASK_MCP_SERVERS"     // {"mcpServers":{name:{"type":"http","url":…}}}
+	EnvMCPCreds   = "AGENT_TASK_MCP_CREDENTIALS" // the agent's .credentials.json content (mcpOAuth)
+)
+
+// mcpRegistrationJSON renders the claude-cli user config for remote HTTP MCP
+// servers: the shape `claude mcp add --scope user --transport http` writes.
+func mcpRegistrationJSON(servers map[string]string) (string, error) {
+	type entry struct {
+		Type string `json:"type"`
+		URL  string `json:"url"`
+	}
+	reg := map[string]map[string]entry{"mcpServers": {}}
+	for name, url := range servers {
+		reg["mcpServers"][name] = entry{Type: "http", URL: url}
+	}
+	b, err := json.Marshal(reg)
+	if err != nil {
+		return "", fmt.Errorf("mcp registration: %w", err)
+	}
+	return string(b), nil
+}
+
+// compactJSON strips whitespace so the value survives a one-line env-file entry.
+func compactJSON(s string) string {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, []byte(s)); err != nil {
+		return s
+	}
+	return buf.String()
 }

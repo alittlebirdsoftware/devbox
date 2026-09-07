@@ -64,6 +64,13 @@ func (s *submitter) Submit(sr api.SubmitRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	mcpCreds := ""
+	if rc.MCPCredsRef != "" {
+		mcpCreds, _, err = creds.Get(rc.MCPCredsRef)
+		if err != nil {
+			return "", err
+		}
+	}
 
 	if err := s.store.UpsertRepo(store.Repo{
 		Name: rc.Name, Owner: rc.Owner, Repo: rc.Repo,
@@ -124,6 +131,7 @@ func (s *submitter) Submit(sr api.SubmitRequest) (string, error) {
 		IssueNumber: sr.Issue, GitHubToken: ghToken,
 		Prompt: prompt.Input{Task: sr.Task},
 		Agent:  ag, AuthMethod: agent.AuthMethod(ac.Auth), AuthValue: modelToken,
+		MCPServers: rc.MCPServers, MCPCreds: mcpCreds,
 		WorkDir: workDir,
 		Limits:  controller.Limits{CPUs: "2", MemoryMB: 2048, PidsLimit: 256, Timeout: timeout},
 	}

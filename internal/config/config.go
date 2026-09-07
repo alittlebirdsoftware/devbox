@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"fmt"
 	"os"
 	"time"
@@ -55,6 +56,14 @@ type Repo struct {
 	Repo          string `yaml:"repo"`
 	DefaultBranch string `yaml:"default_branch"`
 	TokenRef      string `yaml:"token_ref"`
+	// MCPServers registers remote MCP servers (name -> https URL) for the agent
+	// inside this repo's containers; written to $HOME/.claude.json at task start.
+	MCPServers map[string]string `yaml:"mcp_servers"`
+	// MCPCredsRef names a LoadCredential secret holding the agent's MCP OAuth
+	// store (the mcpOAuth section of a claude .credentials.json), delivered by
+	// env-file and written to $HOME/.claude/.credentials.json in the container.
+	// The secret itself never appears in config (D3).
+	MCPCredsRef string `yaml:"mcp_creds_ref"`
 }
 
 // Load reads and parses the YAML config at path.
@@ -136,6 +145,14 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("repo %q: owner and repo are required", r.Name)
 		case r.TokenRef == "":
 			return fmt.Errorf("repo %q: token_ref is required (the LoadCredential secret name)", r.Name)
+		}
+		for name, url := range r.MCPServers {
+			if name == "" || !strings.HasPrefix(url, "https://") {
+				return fmt.Errorf("repo %q: mcp_servers[%q] must be an https:// URL, got %q", r.Name, name, url)
+			}
+		}
+		if strings.ContainsAny(r.MCPCredsRef, `/\`) {
+			return fmt.Errorf("repo %q: mcp_creds_ref must be a bare LoadCredential name", r.Name)
 		}
 		seen[r.Name] = true
 	}

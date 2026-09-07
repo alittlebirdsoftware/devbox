@@ -17,6 +17,7 @@ import (
 	"github.com/iQonAi/devbox/internal/client"
 	"github.com/iQonAi/devbox/internal/config"
 	"github.com/iQonAi/devbox/internal/controller"
+	"github.com/iQonAi/devbox/internal/creds"
 	"github.com/iQonAi/devbox/internal/daemon"
 	"github.com/iQonAi/devbox/internal/prompt"
 	"github.com/iQonAi/devbox/internal/repo"
@@ -172,6 +173,8 @@ func runRun(args []string) error {
 
 	rName, rURL, rBranch := *repoName, *repoURL, *defaultBranch
 	rOwner, rRepo, rTokenRef := "", "", ""
+	var rMCPServers map[string]string
+	rMCPCreds := ""
 	if *repoName != "" && *repoURL == "" {
 		cfg, err := config.Load(*configPath)
 		if err != nil {
@@ -189,6 +192,15 @@ func runRun(args []string) error {
 		}
 		rURL = fmt.Sprintf("https://github.com/%s/%s.git", found.Owner, found.Repo)
 		rOwner, rRepo, rTokenRef = found.Owner, found.Repo, found.TokenRef
+		rMCPServers = found.MCPServers
+		if found.MCPCredsRef != "" {
+			v, _, err := creds.Get(found.MCPCredsRef)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "mcp credentials:", err)
+				os.Exit(2)
+			}
+			rMCPCreds = v
+		}
 		if rBranch == "" {
 			rBranch = found.DefaultBranch
 		}
@@ -277,6 +289,8 @@ func runRun(args []string) error {
 		Agent:         ag,
 		AuthMethod:    agent.AuthMethod(*authStr),
 		AuthValue:     authValue,
+		MCPServers:    rMCPServers,
+		MCPCreds:      rMCPCreds,
 		WorkDir:       wd,
 		Limits:        controller.Limits{CPUs: "2", MemoryMB: 2048, PidsLimit: 256, Timeout: 30 * time.Minute},
 	}

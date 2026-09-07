@@ -26,6 +26,8 @@ func TestLoadRejectsInvalid(t *testing.T) {
 		"duplicate name":    "repos:\n  - {name: a, owner: o, repo: r, token_ref: t}\n  - {name: a, owner: o, repo: r2, token_ref: t2}\n",
 		"missing token_ref": "repos:\n  - {name: a, owner: o, repo: r}\n",
 		"bad timeout":       "limits: {task_timeout: banana}\nrepos:\n  - {name: a, owner: o, repo: r, token_ref: t}\n",
+		"mcp not https":     "repos:\n  - {name: a, owner: o, repo: r, token_ref: t, mcp_servers: {artlist: http://mcp.artlist.io/mcp}}\n",
+		"mcp creds path":    "repos:\n  - {name: a, owner: o, repo: r, token_ref: t, mcp_creds_ref: ../etc/passwd}\n",
 	}
 
 	for name, doc := range cases {
@@ -83,5 +85,17 @@ func TestLoadRejectsBadAgentAuth(t *testing.T) {
 		"agents:\n  claude: {auth: bogus, token_ref: x}\n")
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected an error for bad agent auth")
+	}
+}
+
+func TestLoadRepoMCP(t *testing.T) {
+	doc := "repos:\n  - {name: a, owner: o, repo: r, token_ref: t, mcp_servers: {artlist: https://mcp.artlist.io/mcp}, mcp_creds_ref: claude-mcp-credentials}\n"
+	cfg, err := Load(writeTempConfig(t, doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := cfg.Repos[0]
+	if r.MCPServers["artlist"] != "https://mcp.artlist.io/mcp" || r.MCPCredsRef != "claude-mcp-credentials" {
+		t.Fatalf("mcp fields not loaded: %+v", r)
 	}
 }
