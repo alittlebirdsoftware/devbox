@@ -1,0 +1,7 @@
+[Unit]
+Description=devbox bridge: labelled issues -> agent-task runs
+[Service]
+Type=oneshot
+User=ubuntu
+EnvironmentFile=/etc/devbox-bridge.env
+ExecStart=/usr/local/bin/devbox-bridge.sh
