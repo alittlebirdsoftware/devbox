@@ -27,14 +27,32 @@ mapfile -t issues < <(gh issue list --repo "$REPO" --state open --label agent --
   --jq '.[] | select([.labels[].name] | index("agent:running") or index("agent:done") or index("agent:failed") | not) | .number' | head -n "$MAX_PER_TICK")
 (( ${#issues[@]} )) || { echo "no eligible issues"; exit 0; }
 
+TASK_TIMEOUT_S="${BRIDGE_TASK_TIMEOUT_S:-2400}"   # a hair above devbox's 30m task_timeout
+
 for n in "${issues[@]}"; do
   echo "== issue #$n"
   gh issue edit "$n" --repo "$REPO" --add-label agent:running >/dev/null
   set +e
-  out=$(agent-task run --repo "$REPO_NAME" --issue "$n" --agent "$AGENT" --auth "$AUTH" 2>&1); rc=$?
+  # On a daemon-managed host tasks go through the socket: submit, then poll status.
+  sub=$(agent-task submit --repo "$REPO_NAME" --issue "$n" --agent "$AGENT" 2>&1); rc=$?
+  tid=$(grep -oE 't[0-9]+-[0-9a-f]+' <<<"$sub" | head -1)
+  if (( rc != 0 )) || [[ -z "$tid" ]]; then
+    set -e
+    gh issue edit "$n" --repo "$REPO" --remove-label agent:running --add-label agent:failed >/dev/null
+    gh issue comment "$n" --repo "$REPO" --body "devbox submit failed (exit $rc): $(tail -3 <<<"$sub")" >/dev/null
+    continue
+  fi
+  echo "task $tid"
+  state=""; out=""
+  for (( t=0; t<TASK_TIMEOUT_S; t+=20 )); do
+    out=$(agent-task status "$tid" 2>&1)
+    state=$(sed -n 's/^state: *//p' <<<"$out" | head -1)
+    case "$state" in Completed|Failed|Cancelled) break;; esac
+    sleep 20
+  done
   set -e
   echo "$out" | tail -8
-  if (( rc == 0 )) && grep -q '^pr:' <<<"$out"; then
+  if [[ "$state" == "Completed" ]]; then
     gh issue edit "$n" --repo "$REPO" --remove-label agent:running --add-label agent:done >/dev/null
   elif grep -qiE 'usage limit|rate limit|limit reached|try again (later|at)|overloaded' <<<"$out"; then
     # The subscription window is exhausted (or the API is throttling). Not the issue's fault:
@@ -42,8 +60,9 @@ for n in "${issues[@]}"; do
     gh issue edit "$n" --repo "$REPO" --remove-label agent:running >/dev/null
     echo "model usage limit hit; issue #$n returned to the queue, stopping this tick"; exit 0
   else
+    # devbox marks a run Completed only with >=1 commit, so "no change" lands here too.
     gh issue edit "$n" --repo "$REPO" --remove-label agent:running --add-label agent:failed >/dev/null
-    gh issue comment "$n" --repo "$REPO" --body "devbox run failed (exit $rc). Last lines:
+    gh issue comment "$n" --repo "$REPO" --body "devbox task \`$tid\` ended ${state:-without a terminal state} (no PR). Last events:
 \`\`\`
 $(echo "$out" | tail -12)
 \`\`\`
