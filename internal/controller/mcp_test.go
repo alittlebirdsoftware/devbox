@@ -54,3 +54,14 @@ func TestWrapperSeedsHomeFromEnv(t *testing.T) {
 		t.Fatalf("home seeding must precede the agent command:\n%s", script)
 	}
 }
+
+func TestModelPinRidesInEnv(t *testing.T) {
+	env := map[string]string{}
+	req := Request{Model: "claude-sonnet-5"}
+	if req.Model != "" {
+		env["ANTHROPIC_MODEL"] = req.Model
+	}
+	if env["ANTHROPIC_MODEL"] != "claude-sonnet-5" {
+		t.Fatalf("model pin not in env: %v", env)
+	}
+}

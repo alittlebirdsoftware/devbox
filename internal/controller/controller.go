@@ -103,6 +103,7 @@ type Request struct {
 	AuthValue     string            // model token/key value (M3: from flag/env; M5: LoadCredential)
 	MCPServers    map[string]string // remote MCP servers (name -> https URL) registered for the agent
 	MCPCreds      string            // MCP OAuth store JSON for the agent (LoadCredential); "" = none
+	Model         string            // model to run; "" = the agent CLI's default
 	Limits        Limits
 	WorkDir       string // host scratch dir for prompt, export, and out
 }
@@ -251,6 +252,10 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 	secretEnv := map[string]string{}
 	if req.AuthValue != "" {
 		secretEnv[envVar] = req.AuthValue
+	}
+	// The model pin rides in the same env-file (Claude Code honours ANTHROPIC_MODEL; Pi ignores it).
+	if req.Model != "" {
+		secretEnv["ANTHROPIC_MODEL"] = req.Model
 	}
 	// MCP registration and its OAuth store take the same env-file path as the
 	// model credential (never argv); the wrapper materialises them under $HOME

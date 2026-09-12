@@ -26,6 +26,7 @@ repos:
   #   token_ref: gh-token-branded-cart-hero
   #   mcp_servers: { artlist: https://mcp.artlist.io/mcp }
   #   mcp_creds_ref: claude-mcp-credentials
+  #   model: claude-sonnet-5            # image/orchestration tasks: Sonnet is enough; code repos: claude-opus-5
 
 # Agent base image and the podman command (the cross-user wrapper on the VM).
 image: localhost/devbox-agent-base:dev
@@ -36,6 +37,7 @@ agents:
   claude:
     auth: subscription
     token_ref: claude-oauth-token
+    # model: claude-opus-5             # default for repos that do not pin one; the hardest class may try claude-fable-5-1
   pi:
     auth: api_key # pi has no non-interactive subscription auth; key is ANTHROPIC_API_KEY
     token_ref: anthropic-api-key

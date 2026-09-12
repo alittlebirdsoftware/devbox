@@ -84,6 +84,7 @@ func runSubmit(args []string) error {
 	agentName := fs.String("agent", "claude", "agent adapter: claude|pi|mock")
 	taskText := fs.String("task", "", "free-form task text")
 	issueNum := fs.Int("issue", 0, "GitHub issue number")
+	modelName := fs.String("model", "", "model override for this task (default: repo, then agent config)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -93,7 +94,7 @@ func runSubmit(args []string) error {
 	if (*taskText == "") == (*issueNum == 0) {
 		return fmt.Errorf("exactly one of --task or --issue is required")
 	}
-	id, err := client.New(*socket).Submit(*repoName, *agentName, *taskText, *issueNum)
+	id, err := client.New(*socket).Submit(*repoName, *agentName, *taskText, *issueNum, *modelName)
 	if err != nil {
 		return err
 	}
@@ -151,6 +152,7 @@ func runRun(args []string) error {
 	issueNum := fs.Int("issue", 0, "GitHub issue number to render into the prompt (needs --repo + token)")
 	agentName := fs.String("agent", "claude", "agent adapter: claude|pi|mock")
 	authStr := fs.String("auth", "subscription", "auth method: subscription|api_key")
+	modelName := fs.String("model", "", "model for this run (empty = the CLI's default)")
 	tokenFile := fs.String("model-token-file", "", "file holding the model token; else inherit the agent's env var")
 	ghTokenFile := fs.String("github-token-file", "", "file holding the repo-scoped GitHub token; else inherit GH_TOKEN")
 	image := fs.String("image", "localhost/devbox-agent-base:dev", "agent base image")
@@ -288,6 +290,7 @@ func runRun(args []string) error {
 		Prompt:        prompt.Input{Task: *taskText},
 		Agent:         ag,
 		AuthMethod:    agent.AuthMethod(*authStr),
+		Model:         *modelName,
 		AuthValue:     authValue,
 		MCPServers:    rMCPServers,
 		MCPCreds:      rMCPCreds,

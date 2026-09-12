@@ -38,6 +38,7 @@ type Config struct {
 type AgentConfig struct {
 	Auth     string `yaml:"auth"`      // "subscription" | "api_key"
 	TokenRef string `yaml:"token_ref"` // LoadCredential name for the model credential
+	Model    string `yaml:"model"`     // default model for this agent; a repo's model overrides it
 }
 
 // Limits are the daemon's resource caps (D10)
@@ -64,6 +65,9 @@ type Repo struct {
 	// env-file and written to $HOME/.claude/.credentials.json in the container.
 	// The secret itself never appears in config (D3).
 	MCPCredsRef string `yaml:"mcp_creds_ref"`
+	// Model pins the agent's model for this repo (e.g. claude-sonnet-5 for image tasks,
+	// claude-opus-5 for code). Empty = the agent's default (agents.<name>.model), else the CLI's default.
+	Model string `yaml:"model"`
 }
 
 // Load reads and parses the YAML config at path.

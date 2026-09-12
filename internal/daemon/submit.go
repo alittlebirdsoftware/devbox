@@ -132,6 +132,7 @@ func (s *submitter) Submit(sr api.SubmitRequest) (string, error) {
 		Prompt: prompt.Input{Task: sr.Task},
 		Agent:  ag, AuthMethod: agent.AuthMethod(ac.Auth), AuthValue: modelToken,
 		MCPServers: rc.MCPServers, MCPCreds: mcpCreds,
+		Model:      firstNonEmpty(sr.Model, rc.Model, ac.Model),
 		WorkDir: workDir,
 		Limits:  controller.Limits{CPUs: "2", MemoryMB: 2048, PidsLimit: 256, Timeout: timeout},
 	}
@@ -169,4 +170,13 @@ func (s *submitter) repoID(name string) (int64, error) {
 		}
 	}
 	return 0, fmt.Errorf("repo %q not found after upsert", name)
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

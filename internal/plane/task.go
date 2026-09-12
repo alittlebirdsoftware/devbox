@@ -111,12 +111,24 @@ func applyClaudeTranscript(t *Task, b []byte) {
 	t.CostUSD = tr.CostUSD
 	t.Usage = Usage{InputTokens: tr.Usage.Input, OutputTokens: tr.Usage.Output}
 	if len(tr.ModelUsage) > 0 {
+		// The model that did the work: most output tokens. Claude Code also makes tiny helper
+		// calls on a small model (a title, 18 tokens), which must not be reported as the agent.
 		keys := make([]string, 0, len(tr.ModelUsage))
 		for k := range tr.ModelUsage {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys) // one model in practice; several → deterministic pick
-		t.Agent.Model = keys[0]
+		sort.Strings(keys)
+		best, bestOut := keys[0], -1
+		for _, k := range keys {
+			var u struct {
+				Output int `json:"outputTokens"`
+			}
+			_ = json.Unmarshal(tr.ModelUsage[k], &u)
+			if u.Output > bestOut {
+				best, bestOut = k, u.Output
+			}
+		}
+		t.Agent.Model = best
 	}
 }
 

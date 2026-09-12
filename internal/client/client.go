@@ -48,10 +48,13 @@ func (c *Client) Tasks() ([]store.Task, error) {
 }
 
 // Submit enqueues a task on the daemon and returns the new task id.
-func (c *Client) Submit(repo, agent, task string, issue int) (string, error) {
+func (c *Client) Submit(repo, agent, task string, issue int, model string) (string, error) {
 	body := map[string]any{"repo": repo, "agent": agent}
 	if task != "" {
 		body["task"] = task
+	}
+	if model != "" {
+		body["model"] = model
 	}
 	if issue > 0 {
 		body["issue"] = issue

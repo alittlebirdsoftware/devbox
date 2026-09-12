@@ -64,3 +64,12 @@ func TestCommentCannotCloseItself(t *testing.T) {
 		t.Errorf("JSON leaked a comment terminator: %s", c)
 	}
 }
+
+func TestTranscriptModelIsTheOneThatDidTheWork(t *testing.T) {
+	var task Task
+	applyClaudeTranscript(&task, []byte(`{"num_turns":46,"total_cost_usd":1.07,"usage":{"input_tokens":1,"output_tokens":2},
+	  "modelUsage":{"claude-haiku-4-5-20251001":{"outputTokens":18},"claude-sonnet-5":{"outputTokens":21939}}}`))
+	if task.Agent.Model != "claude-sonnet-5" {
+		t.Fatalf("expected the dominant model, got %q", task.Agent.Model)
+	}
+}

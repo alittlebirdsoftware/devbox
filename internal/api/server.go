@@ -20,6 +20,7 @@ type SubmitRequest struct {
 	Agent string `json:"agent"`
 	Task  string `json:"task,omitempty"`
 	Issue int    `json:"issue,omitempty"`
+	Model string `json:"model,omitempty"` // per-task override of the repo/agent model
 }
 
 // Submitter enqueues and cancels tasks. Implemented by the daemon; nil for the
