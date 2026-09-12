@@ -181,5 +181,9 @@ install -m 0644 /opt/devbox/deploy/aws/bridge/devbox-bridge.service /opt/devbox/
   echo "CLAUDE_CODE_OAUTH_TOKEN=$(cat /etc/agent-task/credentials/claude-oauth-token)"
 } > /etc/devbox-bridge.env
 chown root:"$OPERATOR" /etc/devbox-bridge.env && chmod 0640 /etc/devbox-bridge.env
-systemctl daemon-reload && systemctl enable --now devbox-bridge.timer
+install -m 0755 /opt/devbox/deploy/aws/mcp-persist.sh /usr/local/sbin/devbox-mcp-persist.sh
+install -m 0644 /opt/devbox/deploy/aws/mcp-persist.service /etc/systemd/system/devbox-mcp-persist.service
+install -m 0644 /opt/devbox/deploy/aws/mcp-persist.timer /etc/systemd/system/devbox-mcp-persist.timer
+grep -q MCP_CREDS_SECRET /etc/devbox-bridge.env || printf "MCP_CREDS_SECRET=%s\nAWS_DEFAULT_REGION=%s\n" "${SECRETS_PREFIX}claude-mcp-credentials" "$REGION" >> /etc/devbox-bridge.env
+systemctl daemon-reload && systemctl enable --now devbox-bridge.timer devbox-mcp-persist.timer
 log "done: $(sudo -u "$OPERATOR" agent-task status 2>&1 | head -3 | tr '\n' ' ')"

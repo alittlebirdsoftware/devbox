@@ -1,0 +1,6 @@
+[Unit]
+Description=persist refreshed MCP OAuth stores handed back by agent tasks
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/devbox-bridge.env
+ExecStart=/usr/local/sbin/devbox-mcp-persist.sh

@@ -1,0 +1,7 @@
+[Unit]
+Description=run the MCP store persister every minute
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+[Install]
+WantedBy=timers.target
