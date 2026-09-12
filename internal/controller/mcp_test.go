@@ -43,6 +43,9 @@ func TestWrapperSeedsHomeFromEnv(t *testing.T) {
 			t.Fatalf("wrapper script lacks %q:\n%s", want, script)
 		}
 	}
+	if !strings.Contains(script, "( umask 077; cp") {
+		t.Fatalf("credential hand-back must set umask in a subshell so the bundle stays readable:\n%s", script)
+	}
 	if !strings.Contains(script, "/claude-credentials.json") {
 		t.Fatalf("wrapper must hand the refreshed credential store back as an artifact:\n%s", script)
 	}

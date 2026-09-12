@@ -55,8 +55,9 @@ for n in "${issues[@]}"; do
   # Persist the container's refreshed MCP OAuth store (tokens rotate on refresh; the host copy
   # would otherwise go stale after one run). Only the mcpOAuth section is kept.
   cred="/var/lib/agent-work/$tid/out/claude-credentials.json"
-  if [[ -n "${MCP_CREDS_SECRET:-}" && -r "$cred" ]] && jq -e '.mcpOAuth | length > 0' "$cred" >/dev/null 2>&1; then
-    if aws secretsmanager put-secret-value --secret-id "$MCP_CREDS_SECRET" --secret-string "$(jq -c '{mcpOAuth}' "$cred")" >/dev/null 2>&1; then
+  # the artifact is 0600 agentbox; read it through sudo (the operator has it) and never echo it
+  if [[ -n "${MCP_CREDS_SECRET:-}" ]] && sudo -n test -r "$cred" && sudo -n jq -e '.mcpOAuth | length > 0' "$cred" >/dev/null 2>&1; then
+    if aws secretsmanager put-secret-value --secret-id "$MCP_CREDS_SECRET" --secret-string "$(sudo -n jq -c '{mcpOAuth}' "$cred")" >/dev/null 2>&1; then
       echo "mcp credentials persisted from $tid"; sudo /usr/local/sbin/devbox-refresh-secrets.sh >/dev/null 2>&1 || echo "warning: re-stage failed"
     else
       echo "warning: could not persist mcp credentials"

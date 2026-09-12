@@ -36,8 +36,8 @@ AGENT_EXIT=$?
 # MCP OAuth tokens rotate on refresh: hand the refreshed store back to the host as an artifact
 # so the next task starts from it (the host re-seeds its secret; see deploy/aws/bridge).
 if [ -f "$HOME/.claude/.credentials.json" ]; then
-  umask 077
-  cp "$HOME/.claude/.credentials.json" %[2]s/claude-credentials.json
+  # subshell: the 077 must not leak onto the bundle/diff below, which the host daemon reads
+  ( umask 077; cp "$HOME/.claude/.credentials.json" %[2]s/claude-credentials.json )
 fi
 if [ "$(git rev-list %[4]s..HEAD --count 2>/dev/null || echo 0)" -gt 0 ]; then
   git bundle create %[2]s/changes.bundle %[4]s..HEAD
