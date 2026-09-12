@@ -52,6 +52,16 @@ for n in "${issues[@]}"; do
   done
   set -e
   echo "$out" | tail -8
+  # Persist the container's refreshed MCP OAuth store (tokens rotate on refresh; the host copy
+  # would otherwise go stale after one run). Only the mcpOAuth section is kept.
+  cred="/var/lib/agent-work/$tid/out/claude-credentials.json"
+  if [[ -n "${MCP_CREDS_SECRET:-}" && -r "$cred" ]] && jq -e '.mcpOAuth | length > 0' "$cred" >/dev/null 2>&1; then
+    if aws secretsmanager put-secret-value --secret-id "$MCP_CREDS_SECRET" --secret-string "$(jq -c '{mcpOAuth}' "$cred")" >/dev/null 2>&1; then
+      echo "mcp credentials persisted from $tid"; sudo /usr/local/sbin/devbox-refresh-secrets.sh >/dev/null 2>&1 || echo "warning: re-stage failed"
+    else
+      echo "warning: could not persist mcp credentials"
+    fi
+  fi
   if [[ "$state" == "Completed" ]]; then
     gh issue edit "$n" --repo "$REPO" --remove-label agent:running --add-label agent:done >/dev/null
   elif grep -qiE 'usage limit|rate limit|limit reached|try again (later|at)|overloaded' <<<"$out"; then

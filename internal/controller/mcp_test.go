@@ -43,6 +43,9 @@ func TestWrapperSeedsHomeFromEnv(t *testing.T) {
 			t.Fatalf("wrapper script lacks %q:\n%s", want, script)
 		}
 	}
+	if !strings.Contains(script, "/claude-credentials.json") {
+		t.Fatalf("wrapper must hand the refreshed credential store back as an artifact:\n%s", script)
+	}
 	// the seed block must run before the agent command
 	if strings.Index(script, EnvMCPCreds) > strings.Index(script, "\ntrue\n") {
 		t.Fatalf("home seeding must precede the agent command:\n%s", script)
