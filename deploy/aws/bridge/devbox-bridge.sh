@@ -16,7 +16,8 @@ AGENT="${BRIDGE_AGENT:-claude}"
 AUTH="${BRIDGE_AUTH:-subscription}"             # subscription: a dedicated Max account's setup-token (flat cost, window-throttled); api_key: metered + workspace cap
 MAX_TURNS="${BRIDGE_MAX_TURNS:-}"               # optional ceiling passed to the agent (policy.task.maxIterations)
 LOCK=/run/lock/devbox-bridge.lock
-exec 9>"$LOCK"; flock -n 9 || { echo "bridge already running"; exit 0; }
+# The mcp-persist timer takes this lock briefly to restart the daemon; wait for it rather than drop a tick.
+exec 9>"$LOCK"; flock -w 90 9 || { echo "bridge already running"; exit 0; }
 
 open_agent_prs=$(gh pr list --repo "$REPO" --state open --json headRefName --jq '[.[] | select(.headRefName | startswith("agent/"))] | length')
 if (( open_agent_prs >= MAX_OPEN_PRS )); then
@@ -52,20 +53,14 @@ for n in "${issues[@]}"; do
   done
   set -e
   echo "$out" | tail -8
-  # Persist the container's refreshed MCP OAuth store (tokens rotate on refresh; the host copy
-  # would otherwise go stale after one run). Only the mcpOAuth section is kept.
-  cred="/var/lib/agent-work/$tid/out/claude-credentials.json"
-  # the artifact is 0600 agentbox; read it through sudo (the operator has it) and never echo it
-  # only a store that still carries a refresh token: a failed refresh leaves a stripped entry that must not win
-  if [[ -n "${MCP_CREDS_SECRET:-}" ]] && sudo -n test -r "$cred" && sudo -n jq -e '(.mcpOAuth | length > 0) and ([.mcpOAuth[] | has("refreshToken")] | all)' "$cred" >/dev/null 2>&1; then
-    if aws secretsmanager put-secret-value --secret-id "$MCP_CREDS_SECRET" --secret-string "$(sudo -n jq -c '{mcpOAuth}' "$cred")" >/dev/null 2>&1; then
-      echo "mcp credentials persisted from $tid"; sudo /usr/local/sbin/devbox-refresh-secrets.sh >/dev/null 2>&1 || echo "warning: re-stage failed"
-    else
-      echo "warning: could not persist mcp credentials"
-    fi
-  fi
+  # The refreshed MCP OAuth store the container handed back is persisted by the devbox-mcp-persist
+  # timer (root), which restarts the daemon only while this lock is free. Nothing to do here.
   if [[ "$state" == "Completed" ]]; then
     gh issue edit "$n" --repo "$REPO" --remove-label agent:running --add-label agent:done >/dev/null
+  elif grep -q 'interrupted by daemon shutdown' <<<"$out"; then
+    # Host plumbing, not the issue: the daemon restarted under the task. Back to the queue for the next tick.
+    gh issue edit "$n" --repo "$REPO" --remove-label agent:running >/dev/null
+    echo "task $tid interrupted by a daemon restart; issue #$n returned to the queue"
   elif grep -qiE 'usage limit|rate limit|limit reached|try again (later|at)|overloaded' <<<"$out"; then
     # The subscription window is exhausted (or the API is throttling). Not the issue's fault:
     # put it back in the queue and stop this tick so the rest of the backlog waits too.
