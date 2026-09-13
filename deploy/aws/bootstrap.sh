@@ -102,6 +102,7 @@ chown root:root /usr/local/sbin/agentbox-podman && chmod 0755 /usr/local/sbin/ag
 cat > /etc/sudoers.d/agent-task-podman <<SUDO
 agent-taskd ALL=(agentbox) NOPASSWD: /usr/local/sbin/agentbox-podman
 ${OPERATOR} ALL=(agentbox) NOPASSWD: /usr/local/sbin/agentbox-podman
+${OPERATOR} ALL=(root) NOPASSWD: /usr/local/sbin/devbox-mcp-persist.sh --idle
 SUDO
 chmod 0440 /etc/sudoers.d/agent-task-podman && visudo -cf /etc/sudoers.d/agent-task-podman
 

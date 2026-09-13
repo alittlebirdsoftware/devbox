@@ -5,8 +5,13 @@
 # it); each store is examined once (mtime state). Re-staging the secret restarts the daemon, which
 # kills any task in flight ("interrupted by daemon shutdown"): the restart is taken only while the
 # bridge lock is free, otherwise deferred to a later minute. This is the ONLY persister.
-# Runs as root from a 1-minute timer; env: MCP_CREDS_SECRET, AWS_DEFAULT_REGION.
+# Runs as root from a 1-minute timer (env: MCP_CREDS_SECRET, AWS_DEFAULT_REGION), and synchronously
+# from the bridge at the start of every tick (`--idle`: the caller holds the bridge lock and no task
+# is running, so the re-stage happens at once) — a task must never start from a store whose refresh
+# token a previous task already rotated: the provider's reuse detection revokes the whole grant.
 set -euo pipefail
+IDLE=0; [ "${1:-}" = "--idle" ] && IDLE=1
+[ -n "${MCP_CREDS_SECRET:-}" ] || { set -a; . /etc/devbox-bridge.env; set +a; }
 SECRET="${MCP_CREDS_SECRET:?}"; STATE=/var/lib/agent-task/mcp-persist.mtime
 LOCK=/run/lock/devbox-bridge.lock; PENDING=/var/lib/agent-task/mcp-restart.pending
 # /run/lock is sticky + world-writable and the lock belongs to the bridge user: with fs.protected_regular
@@ -14,9 +19,9 @@ LOCK=/run/lock/devbox-bridge.lock; PENDING=/var/lib/agent-task/mcp-restart.pendi
 [ -e "$LOCK" ] || install -m 0644 -o ubuntu -g ubuntu /dev/null "$LOCK"
 exec 8<"$LOCK"
 restage_if_idle() {
-  if flock -n 8; then
+  if (( IDLE )) || flock -n 8; then
     /usr/local/sbin/devbox-refresh-secrets.sh >/dev/null && rm -f "$PENDING" && echo "daemon re-staged"
-    flock -u 8
+    (( IDLE )) || flock -u 8
   else
     touch "$PENDING"; echo "re-stage deferred: the bridge is mid-run"
   fi

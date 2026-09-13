@@ -19,6 +19,11 @@ LOCK=/run/lock/devbox-bridge.lock
 # The mcp-persist timer takes this lock briefly to restart the daemon; wait for it rather than drop a tick.
 exec 9>"$LOCK"; flock -w 90 9 || { echo "bridge already running"; exit 0; }
 
+# Persist the last run's refreshed MCP store BEFORE starting anything (synchronous; the timer is the
+# backup). A task seeded with a store whose refresh token an earlier task already rotated trips the
+# provider's reuse detection and revokes the whole grant — a stale store is worse than no task.
+if ! sudo -n /usr/local/sbin/devbox-mcp-persist.sh --idle; then echo "mcp persister failed; not starting tasks"; exit 1; fi
+
 open_agent_prs=$(gh pr list --repo "$REPO" --state open --json headRefName --jq '[.[] | select(.headRefName | startswith("agent/"))] | length')
 if (( open_agent_prs >= MAX_OPEN_PRS )); then
   echo "backpressure: $open_agent_prs open agent PRs >= $MAX_OPEN_PRS; not starting new tasks"; exit 0
