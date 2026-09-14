@@ -1,0 +1,7 @@
+[Unit]
+Description=keep the Artlist MCP session warm; open an issue when the grant is dead
+[Service]
+Type=oneshot
+User=ubuntu
+EnvironmentFile=/etc/devbox-bridge.env
+ExecStart=/usr/local/sbin/devbox-mcp-keepalive.sh
