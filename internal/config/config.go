@@ -1,6 +1,7 @@
 package config
 
 import (
+	"regexp"
 	"fmt"
 	"os"
 	"strings"
@@ -49,6 +50,8 @@ type Limits struct {
 	TaskTimeout   string `yaml:"task_timeout"`
 }
 
+var envNameRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
 // Repo is one entry in the static registry (D11): a short name mapped to a
 // Github repo plus the LoadCredentials secret NAME (never the token itself).
 type Repo struct {
@@ -68,6 +71,10 @@ type Repo struct {
 	// Model pins the agent's model for this repo (e.g. claude-sonnet-5 for image tasks,
 	// claude-opus-5 for code). Empty = the agent's default (agents.<name>.model), else the CLI's default.
 	Model string `yaml:"model"`
+	// EnvSecrets maps an environment variable NAME to a LoadCredential secret NAME; the daemon resolves
+	// the value host-side and delivers it by env-file (never argv, never config). Lets a task call a
+	// keyed API (e.g. GEMINI_API_KEY for image generation) without an OAuth store.
+	EnvSecrets map[string]string `yaml:"env_secrets"`
 }
 
 // Load reads and parses the YAML config at path.
@@ -157,6 +164,14 @@ func (c *Config) Validate() error {
 		}
 		if strings.ContainsAny(r.MCPCredsRef, `/\`) {
 			return fmt.Errorf("repo %q: mcp_creds_ref must be a bare LoadCredential name", r.Name)
+		}
+		for env, ref := range r.EnvSecrets {
+			if !envNameRE.MatchString(env) {
+				return fmt.Errorf("repo %q: env_secrets key %q must be an environment variable name", r.Name, env)
+			}
+			if ref == "" || strings.ContainsAny(ref, `/\`) {
+				return fmt.Errorf("repo %q: env_secrets[%q] must be a bare LoadCredential name", r.Name, env)
+			}
 		}
 		seen[r.Name] = true
 	}

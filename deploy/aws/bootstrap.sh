@@ -158,6 +158,7 @@ repos:
     token_ref: gh-token-${BRIDGE_REPO_NAME}
     mcp_servers: { artlist: https://mcp.artlist.io/mcp }
     mcp_creds_ref: claude-mcp-credentials
+    env_secrets: { GEMINI_API_KEY: gemini-api-key }   # keyed fallback provider for image generation (plane HeroProvider=gemini)
 agents:
   claude:
     auth: subscription

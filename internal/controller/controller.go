@@ -103,6 +103,7 @@ type Request struct {
 	AuthValue     string            // model token/key value (M3: from flag/env; M5: LoadCredential)
 	MCPServers    map[string]string // remote MCP servers (name -> https URL) registered for the agent
 	MCPCreds      string            // MCP OAuth store JSON for the agent (LoadCredential); "" = none
+	EnvSecrets    map[string]string // extra environment for the agent: name -> secret VALUE (resolved by the daemon from LoadCredential)
 	Model         string            // model to run; "" = the agent CLI's default
 	Limits        Limits
 	WorkDir       string // host scratch dir for prompt, export, and out
@@ -272,6 +273,12 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 			return Outcome{}, fmt.Errorf("mcp credentials for repo %q are not valid JSON", req.RepoName)
 		}
 		secretEnv[EnvMCPCreds] = compactJSON(req.MCPCreds)
+	}
+	// Keyed-API credentials ride the same env-file and stay in the agent's environment (the task calls the API itself).
+	for name, value := range req.EnvSecrets {
+		if value != "" {
+			secretEnv[name] = value
+		}
 	}
 
 	outDir := filepath.Join(req.WorkDir, "out")

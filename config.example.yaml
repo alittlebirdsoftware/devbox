@@ -26,6 +26,7 @@ repos:
   #   token_ref: gh-token-branded-cart-hero
   #   mcp_servers: { artlist: https://mcp.artlist.io/mcp }
   #   mcp_creds_ref: claude-mcp-credentials
+  #   env_secrets: { GEMINI_API_KEY: gemini-api-key }   # env var NAME -> LoadCredential secret NAME (value never in config)
   #   model: claude-sonnet-5            # image/orchestration tasks: Sonnet is enough; code repos: claude-opus-5
 
 # Agent base image and the podman command (the cross-user wrapper on the VM).

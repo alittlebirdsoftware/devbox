@@ -71,6 +71,14 @@ func (s *submitter) Submit(sr api.SubmitRequest) (string, error) {
 			return "", err
 		}
 	}
+	envSecrets := map[string]string{}
+	for name, ref := range rc.EnvSecrets {
+		v, _, err := creds.Get(ref)
+		if err != nil {
+			return "", err
+		}
+		envSecrets[name] = v
+	}
 
 	if err := s.store.UpsertRepo(store.Repo{
 		Name: rc.Name, Owner: rc.Owner, Repo: rc.Repo,
@@ -131,7 +139,7 @@ func (s *submitter) Submit(sr api.SubmitRequest) (string, error) {
 		IssueNumber: sr.Issue, GitHubToken: ghToken,
 		Prompt: prompt.Input{Task: sr.Task},
 		Agent:  ag, AuthMethod: agent.AuthMethod(ac.Auth), AuthValue: modelToken,
-		MCPServers: rc.MCPServers, MCPCreds: mcpCreds,
+		MCPServers: rc.MCPServers, MCPCreds: mcpCreds, EnvSecrets: envSecrets,
 		Model:   firstNonEmpty(sr.Model, rc.Model, ac.Model),
 		WorkDir: workDir,
 		Limits:  controller.Limits{CPUs: "2", MemoryMB: 2048, PidsLimit: 256, Timeout: timeout},
