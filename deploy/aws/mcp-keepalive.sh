@@ -10,7 +10,9 @@ REPO="${BRIDGE_REPO:?}"; REPO_NAME="${BRIDGE_REPO_NAME:?}"; AGENT="${BRIDGE_AGEN
 LOCK=/run/lock/devbox-bridge.lock
 exec 9>"$LOCK"; flock -w 600 9 || { echo "keepalive: bridge lock busy for 10 min; skipping"; exit 0; }
 sudo -n /usr/local/sbin/devbox-mcp-persist.sh --idle >/dev/null || echo "keepalive: persister failed (continuing)"
-sub=$(agent-task submit --repo "$REPO_NAME" --agent "$AGENT" --task 'Diagnostic only, no repo changes, do not commit: call the mcp__artlist__get_balance tool and report the exact result or the exact error text in one line.' 2>&1)
+# Fail CLOSED: the probe must state success explicitly. Matching failure phrasings does not work — an agent
+# wrote "isn't authorized in this session", which no failure pattern caught, so the probe reported ok (2026-09-15).
+sub=$(agent-task submit --repo "$REPO_NAME" --agent "$AGENT" --task 'Diagnostic only, no repo changes, do not commit, no other tools: call mcp__artlist__get_balance. Your entire final message must be one line, either "ARTLIST_OK <credits>" if the call returned a balance, or "ARTLIST_FAIL <short reason>" for any other outcome, including the tool being unavailable or unauthorised.' 2>&1)
 tid=$(grep -oE 't[0-9]+-[0-9a-f]+' <<<"$sub" | head -1)
 [[ -n "$tid" ]] || { echo "keepalive: submit failed: $sub"; exit 1; }
 for (( t=0; t<300; t+=15 )); do
@@ -19,7 +21,7 @@ for (( t=0; t<300; t+=15 )); do
 done
 sudo -n /usr/local/sbin/devbox-mcp-persist.sh --idle >/dev/null || true
 summary="/var/lib/agent-work/$tid/out/summary.txt"
-if sudo -n grep -qiE 'needs authentication|requires (re-)?authori[sz]ation|not authorized' "$summary" 2>/dev/null; then
+if ! sudo -n grep -q 'ARTLIST_OK' "$summary" 2>/dev/null; then
   title="Artlist session needs re-authentication (devbox keepalive)"
   if ! gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" --json number --jq 'length' | grep -qv '^0$'; then
     gh issue create --repo "$REPO" --title "$title" --label plane --body "The devbox keepalive probe ($tid) found the Artlist MCP server unauthorised at $(date -u +%FT%TZ). Hero generations will block until someone re-authenticates on the Mac CLI, exports the store to plane/devbox/claude-mcp-credentials and re-stages the host (see the control-plane memory notes). Close this issue once done." >/dev/null
@@ -29,4 +31,4 @@ if sudo -n grep -qiE 'needs authentication|requires (re-)?authori[sz]ation|not a
   fi
   exit 0
 fi
-echo "keepalive: Artlist ok ($tid $state)"
+echo "keepalive: Artlist ok ($tid $state) — $(sudo -n grep -o 'ARTLIST_OK.*' "$summary" 2>/dev/null | head -1)"
