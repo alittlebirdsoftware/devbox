@@ -22,12 +22,18 @@ func TestLoadExampleConfig(t *testing.T) {
 // YAML doc we expect Load to reject.
 func TestLoadRejectsInvalid(t *testing.T) {
 	cases := map[string]string{
-		"no repos":          "repos: []\n",
-		"duplicate name":    "repos:\n  - {name: a, owner: o, repo: r, token_ref: t}\n  - {name: a, owner: o, repo: r2, token_ref: t2}\n",
-		"missing token_ref": "repos:\n  - {name: a, owner: o, repo: r}\n",
-		"bad timeout":       "limits: {task_timeout: banana}\nrepos:\n  - {name: a, owner: o, repo: r, token_ref: t}\n",
-		"mcp not https":     "repos:\n  - {name: a, owner: o, repo: r, token_ref: t, mcp_servers: {artlist: http://mcp.artlist.io/mcp}}\n",
-		"mcp creds path":    "repos:\n  - {name: a, owner: o, repo: r, token_ref: t, mcp_creds_ref: ../etc/passwd}\n",
+		"no repos":               "repos: []\n",
+		"duplicate name":         "repos:\n  - {name: a, owner: o, repo: r, token_ref: t}\n  - {name: a, owner: o, repo: r2, token_ref: t2}\n",
+		"missing token_ref":      "repos:\n  - {name: a, owner: o, repo: r}\n",
+		"bad timeout":            "limits: {task_timeout: banana}\nrepos:\n  - {name: a, owner: o, repo: r, token_ref: t}\n",
+		"mcp not https":          "repos:\n  - {name: a, owner: o, repo: r, token_ref: t, mcp_servers: {artlist: http://mcp.artlist.io/mcp}}\n",
+		"mcp creds path":         "repos:\n  - {name: a, owner: o, repo: r, token_ref: t, mcp_creds_ref: ../etc/passwd}\n",
+		"check without contract": "repos:\n  - {name: a, owner: o, repo: r, token_ref: t, check: project-check}\n",
+		"unknown contract":       "repos:\n  - {name: a, owner: o, repo: r, token_ref: t, result_contract: v2}\n",
+		"check with quote":       "repos:\n  - {name: a, owner: o, repo: r, token_ref: t, result_contract: v1, check: \"echo 'x'\"}\n",
+		"tiny memory":            "repos:\n  - {name: a, owner: o, repo: r, token_ref: t, limits: {memory_mb: 64}}\n",
+		"bad cpus":               "repos:\n  - {name: a, owner: o, repo: r, token_ref: t, limits: {cpus: two}}\n",
+		"bad repo timeout":       "repos:\n  - {name: a, owner: o, repo: r, token_ref: t, limits: {task_timeout: soon}}\n",
 	}
 
 	for name, doc := range cases {
@@ -97,5 +103,42 @@ func TestLoadRepoMCP(t *testing.T) {
 	r := cfg.Repos[0]
 	if r.MCPServers["artlist"] != "https://mcp.artlist.io/mcp" || r.MCPCredsRef != "claude-mcp-credentials" {
 		t.Fatalf("mcp fields not loaded: %+v", r)
+	}
+}
+
+func TestRepoImageAndLimitsResolve(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	doc := `image: localhost/devbox-agent-base:dev
+limits: {task_timeout: 30m}
+repos:
+  - {name: hero, owner: o, repo: hero, token_ref: t}
+  - name: app
+    owner: o
+    repo: app
+    token_ref: t2
+    image: localhost/devbox-flutter-amplify:dev
+    limits: {cpus: "2", memory_mb: 4096, task_timeout: 45m}
+    check: project-check
+    result_contract: v1
+`
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	hero, app := cfg.Repos[0], cfg.Repos[1]
+	if got := cfg.TaskImage(hero); got != "localhost/devbox-agent-base:dev" {
+		t.Errorf("hero image = %q, want the global image", got)
+	}
+	if cpus, mem, pids, to := cfg.TaskLimits(hero); cpus != "2" || mem != 2048 || pids != 256 || to.String() != "30m0s" {
+		t.Errorf("hero limits = %s %d %d %s, want today's literals", cpus, mem, pids, to)
+	}
+	if got := cfg.TaskImage(app); got != "localhost/devbox-flutter-amplify:dev" {
+		t.Errorf("app image = %q", got)
+	}
+	if cpus, mem, pids, to := cfg.TaskLimits(app); cpus != "2" || mem != 4096 || pids != 256 || to.String() != "45m0s" {
+		t.Errorf("app limits = %s %d %d %s", cpus, mem, pids, to)
 	}
 }

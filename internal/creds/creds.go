@@ -13,11 +13,25 @@ import (
 	"strings"
 )
 
+// liveDir, when set, replaces $CREDENTIALS_DIRECTORY: a directory the daemon
+// reads at use time, which a root-owned refresher rewrites. LoadCredential is a
+// snapshot taken at service start, so a credential that rotates faster than
+// the daemon restarts (a one-hour, repo-scoped GitHub App installation token)
+// must come from here instead. The refresher keeps the same guarantees: files
+// owned by the service user, mode 0400, in a 0500 directory.
+var liveDir string
+
+// UseDir makes Get read from dir. Call once at startup, before serving.
+func UseDir(dir string) { liveDir = dir }
+
 // Get returns the credential name ref. The boolean reports whether one was
 // found; a missing credeintal is not an error, because a public repo needs no
 // token and the daemon also runs outside systemd during development.
 func Get(ref string) (string, bool, error) {
 	dir := os.Getenv("CREDENTIALS_DIRECTORY")
+	if liveDir != "" {
+		dir = liveDir
+	}
 	if dir == "" {
 		return "", false, nil // not running under systemd
 	}

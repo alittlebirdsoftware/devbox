@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/iQonAi/devbox/internal/agent"
@@ -47,6 +49,9 @@ func (s *submitter) Submit(sr api.SubmitRequest) (string, error) {
 
 	ag, err := agent.Lookup(sr.Agent)
 	if err != nil {
+		return "", err
+	}
+	if err := validateBuildSubmit(sr, *rc, ag); err != nil {
 		return "", err
 	}
 	ac, ok := s.cfg.Agents[sr.Agent]
@@ -129,7 +134,7 @@ func (s *submitter) Submit(sr api.SubmitRequest) (string, error) {
 		}
 	}
 
-	timeout, _ := time.ParseDuration(s.cfg.Limits.TaskTimeout)
+	cpus, memoryMB, pids, timeout := s.cfg.TaskLimits(*rc)
 	req := controller.Request{
 		TaskID:   taskID,
 		Title:    sr.Task,
@@ -140,9 +145,13 @@ func (s *submitter) Submit(sr api.SubmitRequest) (string, error) {
 		Prompt: prompt.Input{Task: sr.Task},
 		Agent:  ag, AuthMethod: agent.AuthMethod(ac.Auth), AuthValue: modelToken,
 		MCPServers: rc.MCPServers, MCPCreds: mcpCreds, EnvSecrets: envSecrets,
-		Model:   firstNonEmpty(sr.Model, rc.Model, ac.Model),
+		Model:          firstNonEmpty(sr.Model, rc.Model, ac.Model),
+		Image:          s.cfg.TaskImage(*rc),
+		Budget:         agent.Budget{MaxUSD: sr.BudgetUSD, MaxTurns: sr.MaxTurns},
+		ResultContract: rc.ResultContract, Check: rc.Check,
+		CheckScope: sr.Scope, ActiveSet: string(sr.ActiveSet),
 		WorkDir: workDir,
-		Limits:  controller.Limits{CPUs: "2", MemoryMB: 2048, PidsLimit: 256, Timeout: timeout},
+		Limits:  controller.Limits{CPUs: cpus, MemoryMB: memoryMB, PidsLimit: pids, Timeout: timeout},
 	}
 	if err := s.pool.Submit(req); err != nil {
 		_ = s.store.UpdateTaskState(taskID, store.StateFailed)
@@ -178,6 +187,36 @@ func (s *submitter) repoID(name string) (int64, error) {
 		}
 	}
 	return 0, fmt.Errorf("repo %q not found after upsert", name)
+}
+
+var scopeRE = regexp.MustCompile(`^(scaffold|regression|(ticket|milestone):[A-Za-z0-9._-]+)$`)
+
+// validateBuildSubmit refuses a submission whose v1 fields do not fit the repo:
+// a scope exactly when the repo has a check, a JSON-object active set only with
+// a scope, and a budget only for an adapter that enforces one.
+func validateBuildSubmit(sr api.SubmitRequest, rc config.Repo, ag agent.Agent) error {
+	switch {
+	case rc.Check != "" && sr.Scope == "":
+		return fmt.Errorf("repo %q has a check: scope is required", rc.Name)
+	case rc.Check == "" && (sr.Scope != "" || len(sr.ActiveSet) > 0):
+		return fmt.Errorf("repo %q has no check: scope and activeSet are not accepted", rc.Name)
+	case sr.Scope != "" && !scopeRE.MatchString(sr.Scope):
+		return fmt.Errorf("scope %q: want scaffold, regression, ticket:<id> or milestone:<id>", sr.Scope)
+	case sr.BudgetUSD < 0 || sr.MaxTurns < 0:
+		return fmt.Errorf("budgetUsd and maxTurns must not be negative")
+	case (sr.BudgetUSD > 0 || sr.MaxTurns > 0) && !agent.SupportsBudget(ag):
+		return fmt.Errorf("agent %q does not support a budget stop", ag.Name())
+	}
+	if len(sr.ActiveSet) > 0 {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(sr.ActiveSet, &obj); err != nil {
+			return fmt.Errorf("activeSet must be a JSON object: %w", err)
+		}
+		if sr.Scope == "scaffold" && len(obj["active"]) > 0 && string(obj["active"]) != "[]" {
+			return fmt.Errorf("scope scaffold takes an empty active set")
+		}
+	}
+	return nil
 }
 
 func firstNonEmpty(vals ...string) string {

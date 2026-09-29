@@ -32,7 +32,7 @@ func TestCompactJSONIsOneLine(t *testing.T) {
 }
 
 func TestWrapperSeedsHomeFromEnv(t *testing.T) {
-	cmd := wrapperCmd("deadbeef", "true")
+	cmd := wrapperCmd("deadbeef", "true", "")
 	script := cmd[len(cmd)-1]
 	for _, want := range []string{
 		"$" + EnvMCPServers, "\"$HOME/.claude.json\"",

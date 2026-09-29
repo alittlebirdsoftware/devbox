@@ -76,3 +76,27 @@ func TestRefCannotEscapeDirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestUseDirReadsAtUseTime(t *testing.T) {
+	t.Setenv("CREDENTIALS_DIRECTORY", t.TempDir())
+	live := t.TempDir()
+	UseDir(live)
+	defer UseDir("")
+	p := filepath.Join(live, "gh-token-app")
+	if err := os.WriteFile(p, []byte("first\n"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok, err := Get("gh-token-app"); err != nil || !ok || v != "first" {
+		t.Fatalf("Get = %q %v %v", v, ok, err)
+	}
+	// A refresher replaces the file (write + rename); the next Get sees it without a restart.
+	if err := os.WriteFile(p+".tmp", []byte("second"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(p+".tmp", p); err != nil {
+		t.Fatal(err)
+	}
+	if v, _, _ := Get("gh-token-app"); v != "second" {
+		t.Fatalf("after rotation Get = %q, want second", v)
+	}
+}

@@ -222,3 +222,59 @@ func TestCancelQueuedRecordsCancelled(t *testing.T) {
 		t.Errorf("no Created->Cancelled event for %s: %+v", queuedID, events)
 	}
 }
+
+func TestSubmitBuildFields(t *testing.T) {
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	got := make(chan controller.Request, 4)
+	p := pool.New(context.Background(), func(_ context.Context, req controller.Request) (controller.Outcome, error) {
+		got <- req
+		return controller.Outcome{}, nil
+	}, 1, 4)
+	cfg := &config.Config{
+		DataDir: t.TempDir(), Image: "global",
+		Limits: config.Limits{MaxConcurrent: 1, TaskTimeout: "30m"},
+		Repos: []config.Repo{
+			{Name: "app", Owner: "o", Repo: "app", DefaultBranch: "main", TokenRef: "gh",
+				Image: "flutter", Limits: config.RepoLimits{MemoryMB: 4096},
+				Check: "project-check", ResultContract: config.ResultContractV1},
+			{Name: "hero", Owner: "o", Repo: "hero", DefaultBranch: "main", TokenRef: "gh"},
+		},
+		Agents: map[string]config.AgentConfig{
+			"claude": {Auth: "subscription", TokenRef: "model"},
+			"pi":     {Auth: "api_key", TokenRef: "model"},
+		},
+	}
+	s := &submitter{cfg: cfg, store: st, pool: p}
+
+	_, err = s.Submit(api.SubmitRequest{Repo: "app", Agent: "claude", Task: "w1",
+		Scope: "ticket:w1", ActiveSet: []byte(`{"active":["f1.1.v1"]}`), BudgetUSD: 3, MaxTurns: 60})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	req := <-got
+	if req.Image != "flutter" || req.Limits.MemoryMB != 4096 || req.Check != "project-check" ||
+		req.ResultContract != "v1" || req.CheckScope != "ticket:w1" || req.ActiveSet != `{"active":["f1.1.v1"]}` ||
+		req.Budget.MaxUSD != 3 || req.Budget.MaxTurns != 60 {
+		t.Errorf("enqueued req = %+v", req)
+	}
+
+	refused := map[string]api.SubmitRequest{
+		"check repo without scope":  {Repo: "app", Agent: "claude", Task: "x"},
+		"scope on a repo w/o check": {Repo: "hero", Agent: "claude", Task: "x", Scope: "regression"},
+		"unknown scope":             {Repo: "app", Agent: "claude", Task: "x", Scope: "everything"},
+		"active set not an object":  {Repo: "app", Agent: "claude", Task: "x", Scope: "regression", ActiveSet: []byte(`["a"]`)},
+		"scaffold with active":      {Repo: "app", Agent: "claude", Task: "x", Scope: "scaffold", ActiveSet: []byte(`{"active":["a"]}`)},
+		"budget for pi":             {Repo: "hero", Agent: "pi", Task: "x", BudgetUSD: 1},
+		"negative turns":            {Repo: "hero", Agent: "claude", Task: "x", MaxTurns: -1},
+	}
+	for name, sr := range refused {
+		if _, err := s.Submit(sr); err == nil {
+			t.Errorf("%s: submit accepted", name)
+		}
+	}
+}

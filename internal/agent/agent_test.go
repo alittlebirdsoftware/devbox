@@ -74,3 +74,28 @@ func TestMockCommandCommits(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeBudgetFlags(t *testing.T) {
+	cmd, err := CommandFor(Claude(), AuthSubscription, "/task/prompt.md", "/task/out/transcript.json", Budget{MaxUSD: 2.5, MaxTurns: 40})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--max-budget-usd 2.5 ", "--max-turns 40 "} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("command lacks %q:\n%s", want, cmd)
+		}
+	}
+	plain, _ := Claude().Command(AuthSubscription, "/task/prompt.md", "/task/out/transcript.json")
+	if strings.Contains(plain, "--max-") {
+		t.Errorf("unbudgeted command carries a stop:\n%s", plain)
+	}
+}
+
+func TestBudgetRefusedForAdapterWithoutStop(t *testing.T) {
+	if _, err := CommandFor(Pi(), AuthAPIKey, "/p", "/t", Budget{MaxUSD: 1}); err == nil {
+		t.Fatal("pi has no budget stop; CommandFor must refuse rather than run unbounded")
+	}
+	if _, err := CommandFor(Pi(), AuthAPIKey, "/p", "/t", Budget{}); err != nil {
+		t.Fatalf("no budget must not need the stop: %v", err)
+	}
+}

@@ -22,6 +22,13 @@ func (claude) EnvVar(method AuthMethod) (string, error) {
 }
 
 func (c claude) Command(method AuthMethod, promptPath, transcriptPath string) (string, error) {
+	return c.BudgetedCommand(method, promptPath, transcriptPath, Budget{})
+}
+
+// BudgetedCommand adds --max-budget-usd (print mode only, which this is) and
+// --max-turns. When either stop fires the transcript's subtype says so
+// (error_max_budget_usd / error_max_turns); see controller.BuildVerdict.
+func (c claude) BudgetedCommand(method AuthMethod, promptPath, transcriptPath string, b Budget) (string, error) {
 	if _, err := c.EnvVar(method); err != nil {
 		return "", err
 	}
@@ -36,12 +43,19 @@ func (c claude) Command(method AuthMethod, promptPath, transcriptPath string) (s
 	//     (`|| true`, stderr dropped) and runs even when claude fails; the
 	//     captured status is re-raised so the summary step never masks the
 	//     agent's exit code.
+	stops := ""
+	if b.MaxUSD > 0 {
+		stops += " --max-budget-usd " + formatUSD(b.MaxUSD)
+	}
+	if b.MaxTurns > 0 {
+		stops += fmt.Sprintf(" --max-turns %d", b.MaxTurns)
+	}
 	return fmt.Sprintf(
 		`claude --version > %[4]s 2>/dev/null || true; `+
-			`claude -p "$(cat %[1]s)" --dangerously-skip-permissions --output-format json > %[2]s; `+
+			`claude -p "$(cat %[1]s)" --dangerously-skip-permissions --output-format json%[5]s > %[2]s; `+
 			`AGENT_STATUS=$?; `+
 			`jq -r '.result // empty' %[2]s > %[3]s 2>/dev/null || true; `+
 			`(exit "$AGENT_STATUS")`,
-		promptPath, transcriptPath, summaryPath(transcriptPath), versionPath(transcriptPath),
+		promptPath, transcriptPath, summaryPath(transcriptPath), versionPath(transcriptPath), stops,
 	), nil
 }

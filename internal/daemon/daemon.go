@@ -15,6 +15,7 @@ import (
 	"github.com/iQonAi/devbox/internal/api"
 	"github.com/iQonAi/devbox/internal/config"
 	"github.com/iQonAi/devbox/internal/controller"
+	"github.com/iQonAi/devbox/internal/creds"
 	"github.com/iQonAi/devbox/internal/pool"
 	"github.com/iQonAi/devbox/internal/repo"
 	"github.com/iQonAi/devbox/internal/runner"
@@ -36,6 +37,9 @@ const (
 
 // Run opens the store, seeds the repo registry, and servers until ctx is cancelled
 func Run(ctx context.Context, cfg *config.Config) error {
+	if cfg.CredentialsDir != "" {
+		creds.UseDir(cfg.CredentialsDir)
+	}
 	dbPath := filepath.Join(cfg.DataDir, "agent-task.db")
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -78,9 +82,15 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	runFn := func(runCtx context.Context, req controller.Request) (controller.Outcome, error) {
 		// The deadline covers the ENTIRE task (not just the container run), so
 		// a wedged git/gh call cannot hold a worker slot forever (§8.6).
-		if taskTimeout > 0 {
+		// A repo may allow its container longer than the global limit; the
+		// whole-task deadline must then be at least that long.
+		deadline := taskTimeout
+		if req.Limits.Timeout > deadline {
+			deadline = req.Limits.Timeout
+		}
+		if deadline > 0 {
 			var cancel context.CancelFunc
-			runCtx, cancel = context.WithTimeout(runCtx, taskTimeout)
+			runCtx, cancel = context.WithTimeout(runCtx, deadline)
 			defer cancel()
 		}
 		out, err := controller.Run(runCtx, deps, req)

@@ -49,7 +49,32 @@ func (c *Client) Tasks() ([]store.Task, error) {
 
 // Submit enqueues a task on the daemon and returns the new task id.
 func (c *Client) Submit(repo, agent, task string, issue int, model string) (string, error) {
+	return c.SubmitBuild(repo, agent, task, issue, model, BuildOptions{})
+}
+
+// BuildOptions are the result-contract-v1 fields of a submission; zero = unset.
+type BuildOptions struct {
+	Scope     string
+	ActiveSet json.RawMessage
+	BudgetUSD float64
+	MaxTurns  int
+}
+
+// SubmitBuild is Submit with a check scope, active set and budget stop.
+func (c *Client) SubmitBuild(repo, agent, task string, issue int, model string, o BuildOptions) (string, error) {
 	body := map[string]any{"repo": repo, "agent": agent}
+	if o.Scope != "" {
+		body["scope"] = o.Scope
+	}
+	if len(o.ActiveSet) > 0 {
+		body["activeSet"] = o.ActiveSet
+	}
+	if o.BudgetUSD > 0 {
+		body["budgetUsd"] = o.BudgetUSD
+	}
+	if o.MaxTurns > 0 {
+		body["maxTurns"] = o.MaxTurns
+	}
 	if task != "" {
 		body["task"] = task
 	}

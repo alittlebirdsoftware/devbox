@@ -21,6 +21,11 @@ type SubmitRequest struct {
 	Task  string `json:"task,omitempty"`
 	Issue int    `json:"issue,omitempty"`
 	Model string `json:"model,omitempty"` // per-task override of the repo/agent model
+	// Result contract v1: the check scope and active-criteria set, and the agent's budget stop.
+	Scope     string          `json:"scope,omitempty"`
+	ActiveSet json.RawMessage `json:"activeSet,omitempty"`
+	BudgetUSD float64         `json:"budgetUsd,omitempty"`
+	MaxTurns  int             `json:"maxTurns,omitempty"`
 }
 
 // Submitter enqueues and cancels tasks. Implemented by the daemon; nil for the

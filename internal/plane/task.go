@@ -46,6 +46,9 @@ type Task struct {
 	Commits     int     `json:"commits"`
 	ExitCode    int     `json:"exitCode"`
 	CostUSD     float64 `json:"costUsd,omitempty"`
+	// Result contract v1 only: the task verdict (controller.BuildVerdict) and the check scope.
+	BuildResult string `json:"buildResult,omitempty"`
+	Scope       string `json:"scope,omitempty"`
 }
 
 // Facts are the host-observed inputs to FromRun.
@@ -60,6 +63,8 @@ type Facts struct {
 	Commits     int
 	ExitCode    int
 	PROpened    bool
+	Verdict     string // v1 verdict; "" for repos without the result contract
+	Scope       string
 }
 
 // FromRun assembles the task facts from the run's out dir. Transcript parsing
@@ -77,9 +82,14 @@ func FromRun(outDir string, f Facts) Task {
 		FinishedAt: f.FinishedAt.UTC().Format(time.RFC3339),
 		Commits:    f.Commits, ExitCode: f.ExitCode,
 	}
+	t.BuildResult, t.Scope = f.Verdict, f.Scope
 	switch {
 	case f.PROpened:
 		t.Outcome = "pr_opened"
+	case f.Verdict == "budget_exceeded":
+		t.Outcome = "budget_exceeded"
+	case f.Verdict == "replan" || f.Verdict == "blocked":
+		t.Outcome = "no_change"
 	case f.ExitCode == 0 && f.Commits == 0:
 		t.Outcome = "no_change"
 	default:

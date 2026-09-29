@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -85,6 +86,10 @@ func runSubmit(args []string) error {
 	taskText := fs.String("task", "", "free-form task text")
 	issueNum := fs.Int("issue", 0, "GitHub issue number")
 	modelName := fs.String("model", "", "model override for this task (default: repo, then agent config)")
+	scope := fs.String("scope", "", "check scope (repos with a check): scaffold|regression|ticket:<id>|milestone:<id>")
+	activeFile := fs.String("active-file", "", "JSON file holding the active-criteria set for the check")
+	budgetUSD := fs.Float64("budget-usd", 0, "the agent's dollar budget stop (0 = none)")
+	maxTurns := fs.Int("max-turns", 0, "the agent's turn cap (0 = none)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -94,7 +99,15 @@ func runSubmit(args []string) error {
 	if (*taskText == "") == (*issueNum == 0) {
 		return fmt.Errorf("exactly one of --task or --issue is required")
 	}
-	id, err := client.New(*socket).Submit(*repoName, *agentName, *taskText, *issueNum, *modelName)
+	opts := client.BuildOptions{Scope: *scope, BudgetUSD: *budgetUSD, MaxTurns: *maxTurns}
+	if *activeFile != "" {
+		b, err := os.ReadFile(*activeFile)
+		if err != nil {
+			return fmt.Errorf("read active set: %w", err)
+		}
+		opts.ActiveSet = json.RawMessage(b)
+	}
+	id, err := client.New(*socket).SubmitBuild(*repoName, *agentName, *taskText, *issueNum, *modelName, opts)
 	if err != nil {
 		return err
 	}

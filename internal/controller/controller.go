@@ -105,8 +105,15 @@ type Request struct {
 	MCPCreds      string            // MCP OAuth store JSON for the agent (LoadCredential); "" = none
 	EnvSecrets    map[string]string // extra environment for the agent: name -> secret VALUE (resolved by the daemon from LoadCredential)
 	Model         string            // model to run; "" = the agent CLI's default
-	Limits        Limits
-	WorkDir       string // host scratch dir for prompt, export, and out
+	Image         string            // image for this task; "" = Deps.Image
+	Budget        agent.Budget      // the agent's self-enforced stop; zero = none
+	// Result contract v1 (config.Repo.ResultContract): the verdict decides the terminal state.
+	ResultContract string
+	Check          string // the repo's check command; "" = none
+	CheckScope     string // scaffold | regression | ticket:<id> | milestone:<id>
+	ActiveSet      string // the active-criteria set, JSON, handed to the check
+	Limits         Limits
+	WorkDir        string // host scratch dir for prompt, export, and out
 }
 
 // Artifact is a file a run produced, ready to be indexed by the caller.
@@ -124,7 +131,8 @@ type Outcome struct {
 	Branch    string
 	Worktree  string
 	OutDir    string
-	PRURL     string // set when a PR was opened (M4)
+	PRURL     string  // set when a PR was opened (M4)
+	Verdict   Verdict // result contract v1 only; "" otherwise
 	Artifacts []Artifact
 }
 
@@ -137,6 +145,10 @@ var artifactKinds = []struct{ name, kind string }{
 	{"run.log", "log"},
 	{"summary.txt", "summary"},
 	{"plane-task.json", "plane_task"},
+	{checksFile, "checks"},
+	{"check.log", "check_log"},
+	{replanFile, "replan"},
+	{blockedFile, "blocked"},
 }
 
 // Run executes the task. It returns an Outcome (with a terminal State) on a
@@ -244,7 +256,7 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 	if err != nil {
 		return Outcome{}, err
 	}
-	agentCmd, err := req.Agent.Command(req.AuthMethod, runner.PromptPath, runner.OutPath+"/transcript.json")
+	agentCmd, err := agent.CommandFor(req.Agent, req.AuthMethod, runner.PromptPath, runner.OutPath+"/transcript.json", req.Budget)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -281,15 +293,32 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 		}
 	}
 
+	// The check's inputs are plain config, not secrets, but ride the same env-file.
+	if req.Check != "" {
+		active := req.ActiveSet
+		if active == "" {
+			active = `{"active":[]}`
+		}
+		if !json.Valid([]byte(active)) {
+			return Outcome{}, fmt.Errorf("active set is not valid JSON")
+		}
+		secretEnv[EnvCheckScope] = req.CheckScope
+		secretEnv[EnvCheckActive] = compactJSON(active)
+	}
+	image := deps.Image
+	if req.Image != "" {
+		image = req.Image
+	}
+
 	outDir := filepath.Join(req.WorkDir, "out")
 	spec := runner.Spec{
 		Name:       req.TaskID,
-		Image:      deps.Image,
+		Image:      image,
 		SourceDir:  exportDir,
 		PromptFile: promptPath,
 		OutDir:     outDir,
 		SecretEnv:  secretEnv,
-		Cmd:        wrapperCmd(base, agentCmd),
+		Cmd:        wrapperCmd(base, agentCmd, req.Check),
 		CPUs:       req.Limits.CPUs,
 		MemoryMB:   req.Limits.MemoryMB,
 		PidsLimit:  req.Limits.PidsLimit,
@@ -315,11 +344,15 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 		// to the terminal state (§7.4): timeout is Failed (D9), a cancel is
 		// Cancelled, a daemon shutdown is Failed. All fire the same cancel path.
 		if state, reason, ok := ContextOutcome(runCtx); ok {
-			return Outcome{
+			out := Outcome{
 				State: state, Error: reason,
 				Branch: branch, Worktree: wt.Path, OutDir: outDir,
 				Artifacts: collectArtifacts(outDir),
-			}, nil
+			}
+			if req.ResultContract != "" {
+				out.Verdict, _ = BuildVerdict(VerdictInput{Ended: endedFrom(runCtx)})
+			}
+			return out, nil
 		}
 		return Outcome{}, fmt.Errorf("run agent container: %w", err)
 	}
@@ -374,7 +407,25 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 		out.Artifacts = collectArtifacts(outDir)
 		return pt
 	}
-	if res.ExitCode != 0 || out.Commits < 1 {
+	if req.ResultContract != "" {
+		// v1: one verdict, and only a change opens a PR.
+		in := VerdictInput{
+			ExitCode: res.ExitCode, Commits: out.Commits,
+			Scope: req.CheckScope, HasCheck: req.Check != "",
+		}
+		readVerdictInputs(outDir, &in)
+		verdict, reason := BuildVerdict(in)
+		out.Verdict = verdict
+		planeFacts.Verdict, planeFacts.Scope = string(verdict), req.CheckScope
+		if verdict != VerdictChange {
+			out.State, out.Error = StateFailed, string(verdict)
+			if reason != string(verdict) {
+				out.Error += ": " + reason
+			}
+			writePlaneTask(false)
+			return out, nil
+		}
+	} else if res.ExitCode != 0 || out.Commits < 1 {
 		out.State = StateFailed
 		writePlaneTask(false)
 		return out, nil
@@ -487,6 +538,24 @@ func (d Deps) recordArtifacts(taskID string, arts []Artifact) {
 		_ = d.Recorder.InsertArtifact(taskID, a.Kind, a.Path)
 	}
 }
+
+// endedFrom names how a done run context ended, for BuildVerdict.
+func endedFrom(ctx context.Context) string {
+	switch state, reason, _ := ContextOutcome(ctx); {
+	case state == StateCancelled:
+		return "cancelled"
+	case reason == "timeout":
+		return "timeout"
+	default:
+		return "shutdown"
+	}
+}
+
+// Env names for the check's inputs (result contract v1).
+const (
+	EnvCheckScope  = "AGENT_TASK_CHECK_SCOPE"
+	EnvCheckActive = "AGENT_TASK_CHECK_ACTIVE"
+)
 
 // Env names the wrapper reads to seed the agent's home with MCP state.
 const (
