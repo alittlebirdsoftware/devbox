@@ -451,10 +451,7 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 			return failedOutcome(ctx, out, "push: "+err.Error()), nil
 		}
 		deps.event(req.TaskID, store.EventSecurity, "pushed branch "+branch)
-		prTitle := title
-		if prTitle == "" {
-			prTitle = req.TaskID
-		}
+		prTitle := repohost.ChangeTitle(title, req.TaskID)
 		pt := writePlaneTask(true)
 		body := repohost.BuildChangeBody(repohost.ChangeInfo{
 			TaskID: req.TaskID, Agent: req.Agent.Name(), IssueURL: issueURL,
