@@ -167,7 +167,9 @@ func runRun(args []string) error {
 	authStr := fs.String("auth", "subscription", "auth method: subscription|api_key")
 	modelName := fs.String("model", "", "model for this run (empty = the CLI's default)")
 	tokenFile := fs.String("model-token-file", "", "file holding the model token; else inherit the agent's env var")
-	ghTokenFile := fs.String("github-token-file", "", "file holding the repo-scoped GitHub token; else inherit GH_TOKEN")
+	ghTokenFile := fs.String("github-token-file", "", "file holding the repository token; else inherit GH_TOKEN (alias: --repo-token-file)")
+	repoTokenFile := fs.String("repo-token-file", "", "file holding the repository token (GitHub or GitLab); same as --github-token-file")
+	repoHostFlag := fs.String("repo-host", "", "repository host for a --repo-url run: github (default) | gitlab; registry runs take it from config")
 	image := fs.String("image", "localhost/devbox-agent-base:dev", "agent base image")
 	podman := fs.String("podman", "podman", "podman command, e.g. 'sudo -u agentbox /usr/local/sbin/agentbox-podman'")
 	dataDir := fs.String("data-dir", "", "mirror cache dir (default: config data_dir)")
@@ -188,6 +190,7 @@ func runRun(args []string) error {
 
 	rName, rURL, rBranch := *repoName, *repoURL, *defaultBranch
 	rOwner, rRepo, rTokenRef := "", "", ""
+	rHost, rAPIURL := *repoHostFlag, ""
 	var rMCPServers map[string]string
 	rMCPCreds := ""
 	if *repoName != "" && *repoURL == "" {
@@ -205,8 +208,9 @@ func runRun(args []string) error {
 		if found == nil {
 			return fmt.Errorf("repo %q is not in the registry", *repoName)
 		}
-		rURL = fmt.Sprintf("https://github.com/%s/%s.git", found.Owner, found.Repo)
+		rURL = found.CloneURL()
 		rOwner, rRepo, rTokenRef = found.Owner, found.Repo, found.TokenRef
+		rHost, rAPIURL = found.Host, found.APIURL
 		rMCPServers = found.MCPServers
 		if found.MCPCredsRef != "" {
 			v, _, err := creds.Get(found.MCPCredsRef)
@@ -227,9 +231,12 @@ func runRun(args []string) error {
 		rBranch = "main"
 	}
 
-	// The repo-scoped GitHub token (D3): from a file, else inherit GH_TOKEN. Used
-	// host-only for the private clone, push, PR, and issue fetch.
+	// The repository token (D3): from a file, else inherit GH_TOKEN. Used
+	// host-only for the private clone, push, the change, and issue fetch.
 	ghToken := os.Getenv("GH_TOKEN")
+	if *repoTokenFile != "" {
+		*ghTokenFile = *repoTokenFile
+	}
 	if *ghTokenFile != "" {
 		b, err := os.ReadFile(*ghTokenFile)
 		if err != nil {
@@ -238,7 +245,7 @@ func runRun(args []string) error {
 		ghToken = strings.TrimSpace(string(b))
 	}
 	if *issueNum > 0 && (ghToken == "" || rOwner == "") {
-		return fmt.Errorf("--issue needs a GitHub token (--github-token-file/GH_TOKEN) and --repo")
+		return fmt.Errorf("--issue needs a repository token (--repo-token-file/GH_TOKEN) and --repo")
 	}
 
 	ag, err := agent.Lookup(*agentName)
@@ -299,7 +306,9 @@ func runRun(args []string) error {
 		Repo:          rRepo,
 		DefaultBranch: rBranch,
 		IssueNumber:   *issueNum,
-		GitHubToken:   ghToken,
+		RepoToken:     ghToken,
+		RepoHost:      rHost,
+		RepoAPIURL:    rAPIURL,
 		Prompt:        prompt.Input{Task: *taskText},
 		Agent:         ag,
 		AuthMethod:    agent.AuthMethod(*authStr),

@@ -1,12 +1,13 @@
-package github
+package repohost
 
 import (
 	"fmt"
 	"strings"
 )
 
-// PRInfo is the data rendered into a templated PR body.
-type PRInfo struct {
+// ChangeInfo is the data rendered into the change body: a pull request body on
+// GitHub, a merge request description on GitLab. The same text on both.
+type ChangeInfo struct {
 	TaskID     string
 	Agent      string
 	IssueURL   string // "" for a --task run
@@ -15,10 +16,10 @@ type PRInfo struct {
 	PlaneTask  string // rendered plane.Comment(...); "" to omit. Hidden in the rendered body.
 }
 
-// BuildPRBody renders the deterministic PR body. It ends with a plain,
-// no-emoji safety marker: the PR is the only human approval gate (0001), so a
+// BuildChangeBody renders the deterministic change body. It ends with a plain,
+// no-emoji safety marker: the change is the only human approval gate (0001), so a
 // reviewer must know the change is agent-authored and unmerged.
-func BuildPRBody(info PRInfo) string {
+func BuildChangeBody(info ChangeInfo) string {
 	var b strings.Builder
 	b.WriteString("## Agent task\n\n")
 	fmt.Fprintf(&b, "- Task: `%s`\n", info.TaskID)

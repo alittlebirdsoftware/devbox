@@ -39,6 +39,14 @@ func New(owner, repo, token string) *Client {
 
 func (c *Client) slug() string { return c.owner + "/" + c.repo }
 
+// CredentialUsername is what git's credential helper presents with the token.
+func (c *Client) CredentialUsername() string { return "x-access-token" }
+
+// OpenChange is the host-neutral name for OpenPR (repohost.Host).
+func (c *Client) OpenChange(ctx context.Context, worktreeDir, branch, base, title, body string) (string, error) {
+	return c.OpenPR(ctx, worktreeDir, branch, base, title, body)
+}
+
 // envWithout returns os.Environ() with the named keys removed, so a caller can
 // append its own single authoritative value.
 func envWithout(keys ...string) []string {

@@ -18,10 +18,10 @@ import (
 	"time"
 
 	"github.com/iQonAi/devbox/internal/agent"
-	"github.com/iQonAi/devbox/internal/github"
 	"github.com/iQonAi/devbox/internal/plane"
 	"github.com/iQonAi/devbox/internal/prompt"
 	"github.com/iQonAi/devbox/internal/repo"
+	"github.com/iQonAi/devbox/internal/repohost"
 	"github.com/iQonAi/devbox/internal/runner"
 	"github.com/iQonAi/devbox/internal/store"
 )
@@ -92,11 +92,13 @@ type Request struct {
 	Title         string // used for the feature-branch slug (issue title when --issue)
 	RepoName      string
 	RepoURL       string
-	Owner         string // GitHub owner, for issue fetch / push / PR
-	Repo          string // GitHub repo name
+	Owner         string // repository owner (GitHub org/user, GitLab group path), for issue fetch / push / change
+	Repo          string // repository name
 	DefaultBranch string
 	IssueNumber   int    // > 0 to render the prompt from an issue (D8 --issue)
-	GitHubToken   string // host-only repo-scoped token (D3); "" = no GitHub, anon clone
+	RepoToken     string // host-only repository token (D3); "" = no host client, anon clone
+	RepoHost      string // github (default) | gitlab (config.Repo.Host)
+	RepoAPIURL    string // the host's API base when not the public one (config.Repo.APIURL)
 	Prompt        prompt.Input
 	Agent         agent.Agent
 	AuthMethod    agent.AuthMethod
@@ -182,12 +184,16 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 		deps.event(req.TaskID, store.EventState, msg)
 	}()
 
-	// A GitHub client (host-only, D3) is available when a token + owner/repo are
-	// set. The controller only calls its methods — it never puts the token into
-	// the runner Spec, so the token cannot reach the container.
-	var gh *github.Client
-	if req.GitHubToken != "" && req.Owner != "" && req.Repo != "" {
-		gh = github.New(req.Owner, req.Repo, req.GitHubToken)
+	// A repository-host client (host-only, D3) is available when a token +
+	// owner/repo are set. The controller only calls its methods — it never puts
+	// the token into the runner Spec, so the token cannot reach the container.
+	var host repohost.Host
+	if req.RepoToken != "" && req.Owner != "" && req.Repo != "" {
+		h, err := repohost.New(req.RepoHost, req.RepoAPIURL, req.Owner, req.Repo, req.RepoToken)
+		if err != nil {
+			return Outcome{}, err
+		}
+		host = h
 	}
 
 	// 0. Resolve the prompt input and an effective title (issue or free-form).
@@ -195,10 +201,10 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 	title := req.Title
 	issueURL := ""
 	if req.IssueNumber > 0 {
-		if gh == nil {
-			return Outcome{}, fmt.Errorf("--issue requires a GitHub token and owner/repo")
+		if host == nil {
+			return Outcome{}, fmt.Errorf("--issue requires a repository token and owner/repo")
 		}
-		issue, err := gh.FetchIssue(ctx, req.IssueNumber)
+		issue, err := host.FetchIssue(ctx, req.IssueNumber)
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -224,7 +230,11 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 
 	// 2. Sync the mirror and create the feature-branch worktree.
 	deps.event(req.TaskID, store.EventPhase, "sync repo")
-	mirror, err := deps.Repo.Sync(ctx, req.RepoName, req.RepoURL, req.GitHubToken)
+	username := ""
+	if host != nil {
+		username = host.CredentialUsername()
+	}
+	mirror, err := deps.Repo.SyncAs(ctx, req.RepoName, req.RepoURL, req.RepoToken, username)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -432,11 +442,12 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 	}
 	out.State = StateCompleted
 
-	// 9. Publish (Completed only): push the branch and open a PR (§9.3). A
-	// publish failure downgrades the task to Failed with the reason; the commits
-	// remain on the local feature branch for inspection.
-	if gh != nil {
-		if err := gh.Push(ctx, wt.Path, branch); err != nil {
+	// 9. Publish (Completed only): push the branch and open the change — a pull
+	// request or a merge request (§9.3). A publish failure downgrades the task
+	// to Failed with the reason; the commits remain on the local feature branch
+	// for inspection.
+	if host != nil {
+		if err := host.Push(ctx, wt.Path, branch); err != nil {
 			return failedOutcome(ctx, out, "push: "+err.Error()), nil
 		}
 		deps.event(req.TaskID, store.EventSecurity, "pushed branch "+branch)
@@ -445,12 +456,12 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 			prTitle = req.TaskID
 		}
 		pt := writePlaneTask(true)
-		body := github.BuildPRBody(github.PRInfo{
+		body := repohost.BuildChangeBody(repohost.ChangeInfo{
 			TaskID: req.TaskID, Agent: req.Agent.Name(), IssueURL: issueURL,
 			Summary:   readArtifact(outDir, "summary.txt"),
 			PlaneTask: plane.Comment(pt),
 		})
-		url, err := gh.OpenPR(ctx, wt.Path, branch, req.DefaultBranch, prTitle, body)
+		url, err := host.OpenChange(ctx, wt.Path, branch, req.DefaultBranch, prTitle, body)
 		if err != nil {
 			writePlaneTask(false)
 			return failedOutcome(ctx, out, "open pr: "+err.Error()), nil
@@ -459,7 +470,7 @@ func Run(ctx context.Context, deps Deps, req Request) (out Outcome, err error) {
 		out.PRURL = url
 		if req.IssueNumber > 0 {
 			// Best-effort back-link; a comment failure must not fail the task.
-			_ = gh.CommentIssue(ctx, req.IssueNumber, "Agent-produced PR: "+url)
+			_ = host.CommentIssue(ctx, req.IssueNumber, "Agent-produced PR: "+url)
 		}
 	} else {
 		writePlaneTask(false)

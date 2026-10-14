@@ -61,7 +61,7 @@ func (s *submitter) Submit(sr api.SubmitRequest) (string, error) {
 
 	// Resolve secrets from LoadCredential (host-only). Absent = empty (anon clone
 	// / no model auth), which the downstream steps surface as a clear failure.
-	ghToken, _, err := creds.Get(rc.TokenRef)
+	repoToken, _, err := creds.Get(rc.TokenRef)
 	if err != nil {
 		return "", err
 	}
@@ -139,9 +139,10 @@ func (s *submitter) Submit(sr api.SubmitRequest) (string, error) {
 		TaskID:   taskID,
 		Title:    sr.Task,
 		RepoName: rc.Name,
-		RepoURL:  fmt.Sprintf("https://github.com/%s/%s.git", rc.Owner, rc.Repo),
+		RepoURL:  rc.CloneURL(),
 		Owner:    rc.Owner, Repo: rc.Repo, DefaultBranch: rc.DefaultBranch,
-		IssueNumber: sr.Issue, GitHubToken: ghToken,
+		RepoHost: rc.Host, RepoAPIURL: rc.APIURL,
+		IssueNumber: sr.Issue, RepoToken: repoToken,
 		Prompt: prompt.Input{Task: sr.Task},
 		Agent:  ag, AuthMethod: agent.AuthMethod(ac.Auth), AuthValue: modelToken,
 		MCPServers: rc.MCPServers, MCPCreds: mcpCreds, EnvSecrets: envSecrets,

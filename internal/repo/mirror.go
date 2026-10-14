@@ -16,9 +16,15 @@ import (
 // so it never appears in argv (/proc/<pid>/cmdline is world-readable).
 const tokenEnvVar = "AGENT_TASK_GIT_TOKEN"
 
+// defaultUsername is what the credential helper presents on GitHub, which
+// accepts any username when the password is a token; GitLab wants oauth2.
+const defaultUsername = "x-access-token"
+
 // credentialHelper is a one-shot shell function git runs when a remote asks for
-// authentication. Github accepts any username when the password is a PAT.
-const credentialHelper = `!f() { echo username=x-access-token; echo password=$` + tokenEnvVar + `; }; f`
+// authentication: the username as given, the token from the environment.
+func credentialHelper(username string) string {
+	return `!f() { echo username=` + username + `; echo password=$` + tokenEnvVar + `; }; f`
+}
 
 // Manager owns the host-side layout under data_dir
 type Manager struct {
@@ -29,7 +35,8 @@ func NewManager(dataDir string) *Manager {
 	return &Manager{dataDir: dataDir}
 }
 
-// CloneURL is the HTTPS remote a registerd repo.
+// CloneURL is the HTTPS remote of a registered repo on GitHub (the store has
+// no host; config.Repo.CloneURL is the host-aware one).
 func CloneURL(r store.Repo) string {
 	return fmt.Sprintf("https://github.com/%s/%s.git", r.Owner, r.Repo)
 }
@@ -46,9 +53,15 @@ func (m *Manager) MirrorPath(name string) string {
 // repo has no dependency on how credentials are stored (D3 keeps the token out
 // of the container regardless).
 func (m *Manager) Sync(ctx context.Context, name, url, token string) (string, error) {
+	return m.SyncAs(ctx, name, url, token, defaultUsername)
+}
+
+// SyncAs is Sync with the username the credential helper presents alongside
+// the token: the repository host's (repohost.Host.CredentialUsername).
+func (m *Manager) SyncAs(ctx context.Context, name, url, token, username string) (string, error) {
 	path := m.MirrorPath(name)
 
-	authArgs, env := auth(token)
+	authArgs, env := auth(token, username)
 
 	// HEAD, not the directory: a half-finished clone leaves a directory behind.
 	if _, err := os.Stat(filepath.Join(path, "HEAD")); err != nil {
@@ -106,11 +119,14 @@ func gitArgs(authArgs []string, sub ...string) []string {
 // machine user, or nils for an empty token — a public repo clones anonymously.
 // The token travels in the environment (never argv) and is consumed by a
 // one-shot credential helper.
-func auth(token string) (args []string, env []string) {
+func auth(token, username string) (args []string, env []string) {
 	if token == "" {
 		return nil, nil
 	}
+	if username == "" {
+		username = defaultUsername
+	}
 	// The empty value clears any inherited helper before ours is appended.
-	return []string{"-c", "credential.helper=", "-c", "credential.helper=" + credentialHelper},
+	return []string{"-c", "credential.helper=", "-c", "credential.helper=" + credentialHelper(username)},
 		[]string{tokenEnvVar + "=" + token}
 }

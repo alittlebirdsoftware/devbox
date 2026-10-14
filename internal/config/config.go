@@ -63,6 +63,12 @@ type Repo struct {
 	Repo          string `yaml:"repo"`
 	DefaultBranch string `yaml:"default_branch"`
 	TokenRef      string `yaml:"token_ref"`
+	// Host is the repository host: "github" (the default; pull requests through gh)
+	// or "gitlab" (merge requests through the REST API; the token is a bot user's
+	// personal access token, username oauth2 for git). APIURL overrides the host's
+	// public API base, e.g. https://gitlab.example.com/api/v4 for a self-managed GitLab.
+	Host   string `yaml:"host"`
+	APIURL string `yaml:"api_url"`
 	// MCPServers registers remote MCP servers (name -> https URL) for the agent
 	// inside this repo's containers; written to $HOME/.claude.json at task start.
 	MCPServers map[string]string `yaml:"mcp_servers"`
@@ -109,6 +115,45 @@ const (
 
 // ResultContractV1 is the only result contract (see Repo.ResultContract).
 const ResultContractV1 = "v1"
+
+// Repository hosts (Repo.Host). GitHub is the default; GitLab is where the
+// plane's generated apps live (merge requests through the REST API).
+const (
+	HostGitHub = "github"
+	HostGitLab = "gitlab"
+)
+
+// APIBase is the host's REST API base: api_url when set, else the public host's.
+func (r Repo) APIBase() string {
+	if r.APIURL != "" {
+		return strings.TrimRight(r.APIURL, "/")
+	}
+	if r.Host == HostGitLab {
+		return "https://gitlab.com/api/v4"
+	}
+	return "https://api.github.com"
+}
+
+// WebBase is the host's web origin, where the repository is cloned from and
+// where its issues and changes live: derived from api_url for a self-managed
+// instance (…/api/v4 or …/api/v3 stripped, api.github.com → github.com).
+func (r Repo) WebBase() string {
+	if r.APIURL != "" {
+		u := strings.TrimRight(r.APIURL, "/")
+		u = strings.TrimSuffix(strings.TrimSuffix(u, "/api/v4"), "/api/v3")
+		return strings.Replace(u, "https://api.github.com", "https://github.com", 1)
+	}
+	if r.Host == HostGitLab {
+		return "https://gitlab.com"
+	}
+	return "https://github.com"
+}
+
+// CloneURL is the HTTPS remote of the repository on its host. The owner may be
+// a GitLab group path with subgroups (a/b); it is used verbatim.
+func (r Repo) CloneURL() string {
+	return fmt.Sprintf("%s/%s/%s.git", r.WebBase(), r.Owner, r.Repo)
+}
 
 // TaskImage is the image this repo's tasks run in.
 func (c *Config) TaskImage(r Repo) string {
@@ -214,6 +259,9 @@ func (c *Config) applyDefaults() {
 		if c.Repos[i].DefaultBranch == "" {
 			c.Repos[i].DefaultBranch = defaultBranch
 		}
+		if c.Repos[i].Host == "" {
+			c.Repos[i].Host = HostGitHub
+		}
 	}
 }
 
@@ -246,6 +294,10 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("repo %q: owner and repo are required", r.Name)
 		case r.TokenRef == "":
 			return fmt.Errorf("repo %q: token_ref is required (the LoadCredential secret name)", r.Name)
+		case r.Host != HostGitHub && r.Host != HostGitLab:
+			return fmt.Errorf("repo %q: host must be github or gitlab, got %q", r.Name, r.Host)
+		case r.APIURL != "" && !strings.HasPrefix(r.APIURL, "https://"):
+			return fmt.Errorf("repo %q: api_url must be an https:// URL, got %q", r.Name, r.APIURL)
 		}
 		for name, url := range r.MCPServers {
 			if name == "" || !strings.HasPrefix(url, "https://") {

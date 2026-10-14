@@ -254,7 +254,7 @@ func TestGitHubTokenNeverReachesRunner(t *testing.T) {
 		Deps{Repo: repo.NewManager(t.TempDir()), Runner: cr, Image: "x"},
 		Request{
 			TaskID: "tok", RepoName: "devbox", RepoURL: "file://" + origin, DefaultBranch: "main",
-			Owner: "iQonAi", Repo: "devbox", GitHubToken: secret,
+			Owner: "iQonAi", Repo: "devbox", RepoToken: secret,
 			Prompt: prompt.Input{Task: "t"}, Agent: agent.Mock(), AuthMethod: agent.AuthAPIKey,
 			WorkDir: t.TempDir(),
 		})

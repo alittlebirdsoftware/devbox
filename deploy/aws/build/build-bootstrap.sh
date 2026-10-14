@@ -8,8 +8,11 @@
 #
 # Run as root from cloud-init user-data:
 #   build-bootstrap.sh <devbox-repo> <devbox-ref> <secrets-prefix> <repo owner/name> <repo-name> \
-#                      <image-uri> <artifact-bucket> <task-cpus> <task-memory-mb> <task-timeout> <check> <model>
-# Secrets under <secrets-prefix> (e.g. plane/devbox-build/<tenant>/): gh-token-<repo-name>, claude-oauth-token.
+#                      <image-uri> <artifact-bucket> <task-cpus> <task-memory-mb> <task-timeout> <check> <model> \
+#                      [repo-host (gitlab|github, default gitlab)] [api-url]
+# <repo owner/name> is the repository's path on its host: a GitLab group path (subgroups allowed) or a
+# GitHub owner, then the name; it is split at the LAST slash.
+# Secrets under <secrets-prefix> (e.g. plane/devbox-build/<tenant>/): repo-token-<repo-name>, claude-oauth-token.
 set -euo pipefail
 DEVBOX_REPO="${1:?owner/repo}"; DEVBOX_REF="${2:?git ref or sha}"
 SECRETS_PREFIX="${3:?secrets manager prefix, e.g. plane/devbox-build/<tenant>/}"
@@ -17,6 +20,9 @@ TENANT_REPO="${4:?owner/repo of the tenant repository}"; REPO_NAME="${5:?registr
 IMAGE_URI="${6:?build-task image in ECR, repo:tag}"; ARTIFACT_BUCKET="${7:?artifact bucket}"
 TASK_CPUS="${8:-2}"; TASK_MEMORY_MB="${9:-4096}"; TASK_TIMEOUT="${10:-30m}"
 CHECK="${11:-project-check}"; MODEL="${12:-}"
+REPO_HOST="${13:-gitlab}"; REPO_API_URL="${14:-}"
+TENANT="$(basename "${SECRETS_PREFIX%/}")"
+case "$REPO_HOST" in gitlab|github) ;; *) echo "repo-host must be gitlab or github, got $REPO_HOST" >&2; exit 1 ;; esac
 OPERATOR=ubuntu
 GOVER=go1.26.8
 LOCAL_IMAGE=localhost/devbox-build-task:current
@@ -37,6 +43,12 @@ export AWS_DEFAULT_REGION="$REGION"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq podman slirp4netns uidmap fuse-overlayfs iptables git jq curl unzip python3 >/dev/null
+if [ "$REPO_HOST" = github ] && ! command -v gh >/dev/null; then
+  # GitHub only: the daemon opens pull requests through gh. GitLab goes through the REST API.
+  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+  echo "deb [arch=${ARCH} signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+  apt-get update -qq && apt-get install -y -qq gh >/dev/null
+fi
 if ! command -v aws >/dev/null; then
   # awscli v2 (the apt awscli is v1 and absent on arm64 jammy).
   curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip
@@ -130,7 +142,7 @@ for arn in $(aws secretsmanager list-secrets --filters Key=name,Values="${SECRET
   CRED_NAMES="${CRED_NAMES} ${name}"
 done
 log "credentials staged:${CRED_NAMES}"
-for need in "gh-token-${REPO_NAME}" claude-oauth-token; do
+for need in "repo-token-${REPO_NAME}" claude-oauth-token; do
   [ -s "/etc/agent-task/credentials/${need}" ] || { echo "missing secret ${SECRETS_PREFIX}${need}" >&2; exit 1; }
 done
 
@@ -164,6 +176,7 @@ log "build-task image ${IMAGE_URI} (${IMAGE_DIGEST}) tagged ${LOCAL_IMAGE}"
 
 # ---- config (no secrets): one repo, result contract v1 ------------------------------------
 MODEL_LINE=""; [ -n "$MODEL" ] && MODEL_LINE="    model: ${MODEL}"
+API_LINE=""; [ -n "$REPO_API_URL" ] && API_LINE="    api_url: ${REPO_API_URL}"
 cat > /etc/agent-task/config.yaml <<CFG
 socket_path: /run/agent-task/agent-task.sock
 data_dir: /var/lib/agent-task
@@ -176,10 +189,12 @@ limits:
   task_timeout: ${TASK_TIMEOUT}
 repos:
   - name: ${REPO_NAME}
-    owner: ${TENANT_REPO%%/*}
+    owner: ${TENANT_REPO%/*}
     repo: ${TENANT_REPO##*/}
+    host: ${REPO_HOST}
+${API_LINE}
     default_branch: main
-    token_ref: gh-token-${REPO_NAME}
+    token_ref: repo-token-${REPO_NAME}
     image: ${LOCAL_IMAGE}
     limits: { cpus: "${TASK_CPUS}", memory_mb: ${TASK_MEMORY_MB}, task_timeout: ${TASK_TIMEOUT} }
     check: ${CHECK}
@@ -194,8 +209,13 @@ chmod 0644 /etc/agent-task/config.yaml
 
 # ---- the host's facts, for the harness and the plane ---------------------------------------
 cat > /etc/devbox-build.env <<ENV
+TENANT=${TENANT}
+OPERATOR=${OPERATOR}
 REPO_NAME=${REPO_NAME}
 TENANT_REPO=${TENANT_REPO}
+REPO_HOST=${REPO_HOST}
+REPO_API_URL=${REPO_API_URL}
+BUSY_PARAMETER=/plane/devbox-build/${TENANT}/busy
 ARTIFACT_BUCKET=${ARTIFACT_BUCKET}
 IMAGE_URI=${IMAGE_URI}
 IMAGE_DIGEST=${IMAGE_DIGEST}
@@ -205,7 +225,8 @@ ENV
 chmod 0644 /etc/devbox-build.env
 install -m 0755 /opt/devbox/deploy/aws/build/trial-harness.sh /usr/local/bin/devbox-build-trial
 
-# ---- live credentials: the repo token rotates hourly, so devbox reads it at submit time ----
+# ---- live credentials: the plane rotates the repo token, so devbox reads it at submit time;
+# ---- the same refresher reports how busy this host is (the rotator waits for idle hosts) ----
 install -m 0755 /opt/devbox/deploy/aws/build/refresh-creds.sh /usr/local/sbin/devbox-build-refresh-creds
 cat > /etc/systemd/system/devbox-build-creds.service <<UNIT
 [Unit]

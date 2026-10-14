@@ -14,6 +14,8 @@ repos:
     repo: devbox
     default_branch: main
     token_ref: gh-token-devbox
+    # host: gitlab                   # github (default; pull requests via gh) or gitlab (merge requests via the API)
+    # api_url: https://gitlab.example.com/api/v4   # only for a self-managed instance
   # A repo whose agent needs a remote MCP server (e.g. Artlist image generation):
   # mcp_servers is written to $HOME/.claude.json in the container; mcp_creds_ref
   # names a LoadCredential secret holding the agent's MCP OAuth store (the
