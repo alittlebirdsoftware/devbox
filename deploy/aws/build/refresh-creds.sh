@@ -26,8 +26,11 @@ for arn in $(aws secretsmanager list-secrets --filters Key=name,Values="${PREFIX
 done
 
 # ---- busy flag: Created and Running are the live states (store.ListTasks); the rest are terminal.
+# The daemon may be down (first run during bootstrap, or a restart): a failed listing
+# counts as idle rather than aborting the refresh (set -e with pipefail would otherwise
+# end this script, and the bootstrap with it, at an assignment from a failed pipeline).
 if [ -n "${BUSY_PARAMETER:-}" ]; then
-  busy=$(sudo -u "${OPERATOR:-ubuntu}" agent-task ls 2>/dev/null | awk -F'\t' '$4 == "Created" || $4 == "Running" { n++ } END { print n + 0 }')
+  busy=$({ sudo -u "${OPERATOR:-ubuntu}" agent-task ls 2>/dev/null || true; } | awk -F'\t' '$4 == "Created" || $4 == "Running" { n++ } END { print n + 0 }')
   aws ssm put-parameter --name "$BUSY_PARAMETER" --type String --overwrite --value "${busy:-0}" >/dev/null \
     || echo "busy flag publish failed (${BUSY_PARAMETER})" >&2
 fi
