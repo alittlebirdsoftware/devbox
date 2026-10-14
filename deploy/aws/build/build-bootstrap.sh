@@ -92,6 +92,15 @@ Delegate=cpu cpuset io memory pids
 DROP
 systemctl daemon-reload
 systemctl restart "user@${AGENTBOX_UID}.service" || true
+# The restart can fail with 219/CGROUP while the previous manager's cgroup is still
+# being torn down (seen on a re-run of this script); every rootless podman step
+# below needs the manager (XDG_RUNTIME_DIR=/run/user/<uid>), so wait for it.
+for i in $(seq 1 10); do
+  systemctl is-active -q "user@${AGENTBOX_UID}.service" && [ -d "/run/user/${AGENTBOX_UID}" ] && break
+  sleep 3
+  systemctl start "user@${AGENTBOX_UID}.service" || true
+done
+systemctl is-active -q "user@${AGENTBOX_UID}.service" || { echo "user manager for agentbox (uid ${AGENTBOX_UID}) is not running" >&2; exit 1; }
 
 # ---- egress deny-list for the container-runner uid (RFC1918, CGNAT, link-local/metadata) --
 cat > /usr/local/sbin/agentbox-egress.sh <<'EGRESS'
