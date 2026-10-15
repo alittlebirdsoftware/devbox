@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/iQonAi/devbox/internal/agent"
+	"github.com/iQonAi/devbox/internal/api"
 	"github.com/iQonAi/devbox/internal/client"
 	"github.com/iQonAi/devbox/internal/config"
 	"github.com/iQonAi/devbox/internal/controller"
@@ -71,9 +72,9 @@ usage:
 	agent-task repos [--socket PATH]	list registered repositories
 	agent-task ls [--socket PATH]	list tasks
 	agent-task run --task TEXT --repo-url URL [--agent claude]	run an agent task locally (M3)
-	agent-task submit --repo NAME --agent NAME (--task TEXT | --issue N)	queue a task on the daemon
+	agent-task submit --repo NAME --agent NAME (--task TEXT | --issue N) [--ref REF] [--json]	queue a task on the daemon (a repeat --ref returns the existing task)
 	agent-task cancel ID [--socket PATH]	cancel a running task
-	agent-task status ID [--socket PATH]	show a task's state + events
+	agent-task status [--json] ID [--socket PATH]	show a task's state + events
 `)
 }
 
@@ -90,6 +91,8 @@ func runSubmit(args []string) error {
 	activeFile := fs.String("active-file", "", "JSON file holding the active-criteria set for the check")
 	budgetUSD := fs.Float64("budget-usd", 0, "the agent's dollar budget stop (0 = none)")
 	maxTurns := fs.Int("max-turns", 0, "the agent's turn cap (0 = none)")
+	ref := fs.String("ref", "", "client reference: a repeat submit with the same ref returns the existing task")
+	asJSON := fs.Bool("json", false, "print {\"taskId\",\"existing\"} instead of the bare id")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -99,7 +102,7 @@ func runSubmit(args []string) error {
 	if (*taskText == "") == (*issueNum == 0) {
 		return fmt.Errorf("exactly one of --task or --issue is required")
 	}
-	opts := client.BuildOptions{Scope: *scope, BudgetUSD: *budgetUSD, MaxTurns: *maxTurns}
+	opts := client.BuildOptions{Scope: *scope, BudgetUSD: *budgetUSD, MaxTurns: *maxTurns, Ref: *ref}
 	if *activeFile != "" {
 		b, err := os.ReadFile(*activeFile)
 		if err != nil {
@@ -107,11 +110,14 @@ func runSubmit(args []string) error {
 		}
 		opts.ActiveSet = json.RawMessage(b)
 	}
-	id, err := client.New(*socket).SubmitBuild(*repoName, *agentName, *taskText, *issueNum, *modelName, opts)
+	res, err := client.New(*socket).SubmitBuildResult(*repoName, *agentName, *taskText, *issueNum, *modelName, opts)
 	if err != nil {
 		return err
 	}
-	fmt.Println(id)
+	if *asJSON {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"taskId": res.TaskID, "existing": res.Existing})
+	}
+	fmt.Println(res.TaskID)
 	return nil
 }
 
@@ -132,21 +138,33 @@ func runCancel(args []string) error {
 	return nil
 }
 
-// runStatus shows a task's state and audit events.
+// runStatus shows a task's state and audit events; --json prints the one-line
+// summary (api.TaskStatus) the build host's command hands the plane.
 func runStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	socket := fs.String("socket", config.DefaultSocketPath, "daemon socket path")
+	asJSON := fs.Bool("json", false, "print the status as one JSON object")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: agent-task status <id>")
+		return fmt.Errorf("usage: agent-task status [--json] <id>")
 	}
 	task, events, err := client.New(*socket).Status(fs.Arg(0))
 	if err != nil {
 		return err
 	}
-	fmt.Printf("id:     %s\nstate:  %s\nsource: %s\n\nevents:\n", task.ID, task.State, task.Source)
+	if *asJSON {
+		return json.NewEncoder(os.Stdout).Encode(api.Summarize(task, events))
+	}
+	fmt.Printf("id:     %s\nstate:  %s\nsource: %s\n", task.ID, task.State, task.Source)
+	if task.Ref != "" {
+		fmt.Printf("ref:    %s\n", task.Ref)
+	}
+	if task.PRURL != "" {
+		fmt.Printf("change: %s\n", task.PRURL)
+	}
+	fmt.Printf("\nevents:\n")
 	for _, e := range events {
 		fmt.Printf("  %s  %-8s %s\n", e.TS.Format(time.RFC3339), e.Type, e.Message)
 	}

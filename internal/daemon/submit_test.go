@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/iQonAi/devbox/internal/api"
@@ -36,9 +38,13 @@ func TestSubmitCreatesTaskAndEnqueues(t *testing.T) {
 	}
 	s := &submitter{cfg: cfg, store: st, pool: p}
 
-	id, err := s.Submit(api.SubmitRequest{Repo: "devbox", Agent: "mock", Task: "do a thing"})
+	res, err := s.Submit(api.SubmitRequest{Repo: "devbox", Agent: "mock", Task: "do a thing"})
 	if err != nil {
 		t.Fatalf("submit: %v", err)
+	}
+	id := res.TaskID
+	if res.Existing {
+		t.Error("a first submit reported an existing task")
 	}
 
 	req := <-got
@@ -196,10 +202,11 @@ func TestCancelQueuedRecordsCancelled(t *testing.T) {
 		t.Fatalf("submit 1: %v", err)
 	}
 	<-started
-	queuedID, err := s.Submit(api.SubmitRequest{Repo: "devbox", Agent: "mock", Task: "stay queued"})
+	queued, err := s.Submit(api.SubmitRequest{Repo: "devbox", Agent: "mock", Task: "stay queued"})
 	if err != nil {
 		t.Fatalf("submit 2: %v", err)
 	}
+	queuedID := queued.TaskID
 
 	if err := s.Cancel(queuedID); err != nil {
 		t.Fatalf("cancel queued: %v", err)
@@ -276,5 +283,122 @@ func TestSubmitBuildFields(t *testing.T) {
 		if _, err := s.Submit(sr); err == nil {
 			t.Errorf("%s: submit accepted", name)
 		}
+	}
+}
+
+// A submit carrying a ref is idempotent: the second answer is the first task,
+// marked existing, with nothing new filed or enqueued — whatever state the
+// first task reached. A bad ref is refused before anything is read.
+func TestSubmitRefIsIdempotent(t *testing.T) {
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	got := make(chan controller.Request, 4)
+	p := pool.New(context.Background(), func(_ context.Context, req controller.Request) (controller.Outcome, error) {
+		got <- req
+		return controller.Outcome{}, nil
+	}, 1, 4)
+	cfg := &config.Config{
+		DataDir: t.TempDir(),
+		Limits:  config.Limits{MaxConcurrent: 1, TaskTimeout: "30m"},
+		Repos:   []config.Repo{{Name: "app", Owner: "o", Repo: "app", DefaultBranch: "main", TokenRef: "gh"}},
+		Agents:  map[string]config.AgentConfig{"mock": {Auth: "api_key", TokenRef: "model"}},
+	}
+	s := &submitter{cfg: cfg, store: st, pool: p}
+
+	first, err := s.Submit(api.SubmitRequest{Repo: "app", Agent: "mock", Task: "split: Split the bill", Ref: "tab-split.p1.split.a1"})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	<-got
+	again, err := s.Submit(api.SubmitRequest{Repo: "app", Agent: "mock", Task: "split: Split the bill", Ref: "tab-split.p1.split.a1"})
+	if err != nil {
+		t.Fatalf("repeat submit: %v", err)
+	}
+	if again.TaskID != first.TaskID || !again.Existing || first.Existing {
+		t.Errorf("repeat = %+v, first = %+v", again, first)
+	}
+	// Even after the task ended: the ref still names it.
+	_ = st.UpdateTaskState(first.TaskID, store.StateFailed)
+	done, err := s.Submit(api.SubmitRequest{Repo: "app", Agent: "mock", Task: "x", Ref: "tab-split.p1.split.a1"})
+	if err != nil || done.TaskID != first.TaskID || !done.Existing {
+		t.Errorf("after terminal: %+v, %v", done, err)
+	}
+	tasks, _ := st.ListTasks()
+	if len(tasks) != 1 || tasks[0].Ref != "tab-split.p1.split.a1" {
+		t.Fatalf("tasks = %+v, want the one task carrying the ref", tasks)
+	}
+	select {
+	case req := <-got:
+		t.Errorf("a repeat submit enqueued %s", req.TaskID)
+	default:
+	}
+	// A different ref is a different task.
+	second, err := s.Submit(api.SubmitRequest{Repo: "app", Agent: "mock", Task: "x", Ref: "tab-split.p1.split.a2"})
+	if err != nil || second.Existing || second.TaskID == first.TaskID {
+		t.Errorf("second ref: %+v, %v", second, err)
+	}
+	<-got
+	for _, bad := range []string{"has space", "slash/inside", "colon:inside", strings.Repeat("x", 201)} {
+		if _, err := s.Submit(api.SubmitRequest{Repo: "app", Agent: "mock", Task: "x", Ref: bad}); err == nil {
+			t.Errorf("ref %q accepted", bad)
+		}
+	}
+}
+
+// Two submits with one ref at the same moment: the unique index lets one row
+// in; the other resolves to it. Exactly one task exists afterwards.
+func TestSubmitRefRace(t *testing.T) {
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	p := pool.New(context.Background(), func(_ context.Context, req controller.Request) (controller.Outcome, error) {
+		return controller.Outcome{}, nil
+	}, 1, 64)
+	cfg := &config.Config{
+		DataDir: t.TempDir(),
+		Limits:  config.Limits{MaxConcurrent: 1, TaskTimeout: "30m"},
+		Repos:   []config.Repo{{Name: "app", Owner: "o", Repo: "app", DefaultBranch: "main", TokenRef: "gh"}},
+		Agents:  map[string]config.AgentConfig{"mock": {Auth: "api_key", TokenRef: "model"}},
+	}
+	s := &submitter{cfg: cfg, store: st, pool: p}
+
+	const n = 8
+	results := make(chan api.SubmitResponse, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := s.Submit(api.SubmitRequest{Repo: "app", Agent: "mock", Task: "x", Ref: "race.p1.item.a1"})
+			if err != nil {
+				t.Errorf("submit: %v", err)
+				return
+			}
+			results <- r
+		}()
+	}
+	wg.Wait()
+	close(results)
+	ids := map[string]bool{}
+	fresh := 0
+	for r := range results {
+		ids[r.TaskID] = true
+		if !r.Existing {
+			fresh++
+		}
+	}
+	if len(ids) != 1 || fresh != 1 {
+		t.Errorf("ids = %v, fresh = %d; want one task filed once", ids, fresh)
+	}
+	tasks, _ := st.ListTasks()
+	if len(tasks) != 1 {
+		t.Errorf("tasks = %d, want 1", len(tasks))
 	}
 }

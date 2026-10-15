@@ -58,10 +58,25 @@ type BuildOptions struct {
 	ActiveSet json.RawMessage
 	BudgetUSD float64
 	MaxTurns  int
+	// Ref makes the submission idempotent: a task carrying it already is the answer.
+	Ref string
+}
+
+// SubmitResult is the daemon's answer: the task id, and whether the ref named
+// a task it already had.
+type SubmitResult struct {
+	TaskID   string
+	Existing bool
 }
 
 // SubmitBuild is Submit with a check scope, active set and budget stop.
 func (c *Client) SubmitBuild(repo, agent, task string, issue int, model string, o BuildOptions) (string, error) {
+	r, err := c.SubmitBuildResult(repo, agent, task, issue, model, o)
+	return r.TaskID, err
+}
+
+// SubmitBuildResult is SubmitBuild, also saying whether the task existed (by ref).
+func (c *Client) SubmitBuildResult(repo, agent, task string, issue int, model string, o BuildOptions) (SubmitResult, error) {
 	body := map[string]any{"repo": repo, "agent": agent}
 	if o.Scope != "" {
 		body["scope"] = o.Scope
@@ -84,13 +99,17 @@ func (c *Client) SubmitBuild(repo, agent, task string, issue int, model string, 
 	if issue > 0 {
 		body["issue"] = issue
 	}
+	if o.Ref != "" {
+		body["ref"] = o.Ref
+	}
 	var resp struct {
-		TaskID string `json:"task_id"`
+		TaskID   string `json:"task_id"`
+		Existing bool   `json:"existing"`
 	}
 	if err := c.post("/v1/tasks", body, &resp); err != nil {
-		return "", err
+		return SubmitResult{}, err
 	}
-	return resp.TaskID, nil
+	return SubmitResult{TaskID: resp.TaskID, Existing: resp.Existing}, nil
 }
 
 // Cancel asks the daemon to cancel a running task.

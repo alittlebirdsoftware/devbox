@@ -3,6 +3,7 @@ package daemon
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,13 +29,44 @@ type submitter struct {
 	pool  *pool.Pool
 }
 
-func (s *submitter) Submit(sr api.SubmitRequest) (string, error) {
+func (s *submitter) Submit(sr api.SubmitRequest) (api.SubmitResponse, error) {
 	if sr.Task == "" && sr.Issue == 0 {
-		return "", fmt.Errorf("one of task or issue is required")
+		return api.SubmitResponse{}, fmt.Errorf("one of task or issue is required")
 	}
 	if sr.Task != "" && sr.Issue != 0 {
-		return "", fmt.Errorf("task and issue are mutually exclusive")
+		return api.SubmitResponse{}, fmt.Errorf("task and issue are mutually exclusive")
 	}
+	if sr.Ref != "" && !refRE.MatchString(sr.Ref) {
+		return api.SubmitResponse{}, fmt.Errorf("ref %q: want 1-200 characters of [A-Za-z0-9._-]", sr.Ref)
+	}
+	// Idempotent by ref: the task this host already has for it is the answer,
+	// whatever state it is in. Checked before any validation that depends on
+	// today's config, so a repeat resolves even if the registry changed since.
+	if existing, err := s.store.TaskByRef(sr.Ref); err != nil {
+		return api.SubmitResponse{}, err
+	} else if existing != nil {
+		return api.SubmitResponse{TaskID: existing.ID, Existing: true}, nil
+	}
+	id, err := s.submitNew(sr)
+	if err != nil {
+		if errors.Is(err, store.ErrDuplicateRef) {
+			// Two submits with one ref raced to the insert; the index let one through. Answer with that one.
+			if existing, lerr := s.store.TaskByRef(sr.Ref); lerr == nil && existing != nil {
+				return api.SubmitResponse{TaskID: existing.ID, Existing: true}, nil
+			}
+		}
+		return api.SubmitResponse{}, err
+	}
+	return api.SubmitResponse{TaskID: id}, nil
+}
+
+// refRE bounds a client reference to the characters a container name, a path
+// and a log line all tolerate.
+var refRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,200}$`)
+
+// submitNew files a task: resolves the repo and agent, the secrets host-side
+// via LoadCredential (D3), persists the row (with the ref), and enqueues it.
+func (s *submitter) submitNew(sr api.SubmitRequest) (string, error) {
 
 	var rc *config.Repo
 	for i := range s.cfg.Repos {
@@ -109,7 +141,7 @@ func (s *submitter) Submit(sr api.SubmitRequest) (string, error) {
 		source = "issue"
 	}
 	if err := s.store.CreateTask(store.NewTask{
-		ID: taskID, RepoID: repoID, Source: source, Agent: sr.Agent,
+		ID: taskID, RepoID: repoID, Source: source, Agent: sr.Agent, Ref: sr.Ref,
 	}); err != nil {
 		return "", err
 	}

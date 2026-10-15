@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -26,8 +27,8 @@ func TestOpenMigrates(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("schema_migrations = %d, want 1", count)
+	if count != 2 {
+		t.Errorf("schema_migrations = %d, want 2", count)
 	}
 }
 
@@ -69,8 +70,8 @@ func TestMigrateIdempotent(t *testing.T) {
 	if err := s2.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("after reopen migrations = %d, want 1", count)
+	if count != 2 {
+		t.Errorf("after reopen migrations = %d, want 2", count)
 	}
 }
 
@@ -417,5 +418,59 @@ func TestEvents(t *testing.T) {
 	// FK: an event for an unknown task must be rejected (foreign_keys on).
 	if err := s.InsertEvent("nope", EventState, "x"); err == nil {
 		t.Fatal("expected FK violation for unknown task, got nil")
+	}
+}
+
+// A task's ref is stored, listed and looked up; a second task with the same
+// ref is ErrDuplicateRef; tasks without a ref do not collide.
+func TestTaskRef(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+	if err := s.UpsertRepo(Repo{Name: "r", Owner: "o", Repo: "r", DefaultBranch: "main", TokenRef: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	repos, _ := s.ListRepos()
+	id := repos[0].ID
+
+	if err := s.CreateTask(NewTask{ID: "t1", RepoID: id, Source: "task", Ref: "tab-split.p1.split.a1"}); err != nil {
+		t.Fatalf("create t1: %v", err)
+	}
+	if err := s.CreateTask(NewTask{ID: "t2", RepoID: id, Source: "task"}); err != nil {
+		t.Fatalf("create t2 (no ref): %v", err)
+	}
+	if err := s.CreateTask(NewTask{ID: "t3", RepoID: id, Source: "task"}); err != nil {
+		t.Fatalf("create t3 (no ref, must not collide with t2): %v", err)
+	}
+	err = s.CreateTask(NewTask{ID: "t4", RepoID: id, Source: "task", Ref: "tab-split.p1.split.a1"})
+	if !errors.Is(err, ErrDuplicateRef) {
+		t.Fatalf("duplicate ref error = %v, want ErrDuplicateRef", err)
+	}
+
+	got, err := s.TaskByRef("tab-split.p1.split.a1")
+	if err != nil || got == nil || got.ID != "t1" || got.Ref != "tab-split.p1.split.a1" {
+		t.Fatalf("TaskByRef = %+v, %v", got, err)
+	}
+	if none, err := s.TaskByRef("nope"); err != nil || none != nil {
+		t.Errorf("unknown ref = %+v, %v", none, err)
+	}
+	if none, err := s.TaskByRef(""); err != nil || none != nil {
+		t.Errorf("empty ref = %+v, %v", none, err)
+	}
+	_ = s.SetTaskPRURL("t1", "https://gitlab.com/g/p/-/merge_requests/1")
+	tasks, _ := s.ListTasks()
+	for _, task := range tasks {
+		switch task.ID {
+		case "t1":
+			if task.Ref != "tab-split.p1.split.a1" || task.PRURL != "https://gitlab.com/g/p/-/merge_requests/1" {
+				t.Errorf("t1 listed as %+v", task)
+			}
+		default:
+			if task.Ref != "" || task.PRURL != "" {
+				t.Errorf("%s listed with ref/pr: %+v", task.ID, task)
+			}
+		}
 	}
 }

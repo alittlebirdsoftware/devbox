@@ -26,12 +26,23 @@ type SubmitRequest struct {
 	ActiveSet json.RawMessage `json:"activeSet,omitempty"`
 	BudgetUSD float64         `json:"budgetUsd,omitempty"`
 	MaxTurns  int             `json:"maxTurns,omitempty"`
+	// Ref is the submitter's reference for the task (the plane scheduler's attempt
+	// ref). A submit whose ref an existing task carries returns that task instead
+	// of filing another, so a repeat after a crash is harmless.
+	Ref string `json:"ref,omitempty"`
+}
+
+// SubmitResponse is the body of POST /v1/tasks: the task id, and whether it
+// was an existing task found by ref rather than a new one.
+type SubmitResponse struct {
+	TaskID   string `json:"task_id"`
+	Existing bool   `json:"existing,omitempty"`
 }
 
 // Submitter enqueues and cancels tasks. Implemented by the daemon; nil for the
 // read-only server (M0/M1 tests).
 type Submitter interface {
-	Submit(SubmitRequest) (taskID string, err error)
+	Submit(SubmitRequest) (SubmitResponse, error)
 	Cancel(taskID string) error
 }
 
@@ -68,12 +79,17 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	id, err := s.sub.Submit(sr)
+	res, err := s.sub.Submit(sr)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"task_id": id})
+	// 202 for a task just queued; 200 when the ref named a task this host already has.
+	code := http.StatusAccepted
+	if res.Existing {
+		code = http.StatusOK
+	}
+	writeJSON(w, code, res)
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
