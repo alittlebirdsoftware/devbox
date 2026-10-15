@@ -2,9 +2,11 @@
 # Build-lane devbox host bootstrap (ticketed build spec, TB-01). One host per
 # active build: one tenant repository, the project type's build-task image
 # pulled from ECR, result contract v1 with the project type's check, and no
-# bridge, tool server or MCP grant. The job lane's bootstrap (../bootstrap.sh)
-# is deliberately separate and untouched: an existing host is never affected by
-# a change here.
+# bridge, tool server or MCP grant. The plane's scheduler (TB-05) reaches the
+# host through SSM Run Command and the devbox-build-task command installed
+# here (D-13); the host runs no poller. The job lane's bootstrap
+# (../bootstrap.sh) is deliberately separate and untouched: an existing host is
+# never affected by a change here.
 #
 # Run as root from cloud-init user-data:
 #   build-bootstrap.sh <devbox-repo> <devbox-ref> <secrets-prefix> <repo owner/name> <repo-name> \
@@ -216,7 +218,7 @@ agents:
 CFG
 chmod 0644 /etc/agent-task/config.yaml
 
-# ---- the host's facts, for the harness and the plane ---------------------------------------
+# ---- the host's facts, for the scheduler's host command and the plane ----------------------
 cat > /etc/devbox-build.env <<ENV
 TENANT=${TENANT}
 OPERATOR=${OPERATOR}
@@ -232,7 +234,9 @@ DEVBOX_REF=${DEVBOX_REF}
 AWS_DEFAULT_REGION=${REGION}
 ENV
 chmod 0644 /etc/devbox-build.env
-install -m 0755 /opt/devbox/deploy/aws/build/trial-harness.sh /usr/local/bin/devbox-build-trial
+# The scheduler's host command (TB-05): submit / status / finalize / cancel, run by the plane through SSM.
+install -m 0755 /opt/devbox/deploy/aws/build/devbox-build-task.sh /usr/local/bin/devbox-build-task
+rm -f /usr/local/bin/devbox-build-trial   # the Step 1 trial harness this command replaces
 
 # ---- live credentials: the plane rotates the repo token, so devbox reads it at submit time;
 # ---- the same refresher reports how busy this host is (the rotator waits for idle hosts) ----
